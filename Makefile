@@ -42,6 +42,10 @@ SERVER_IMAGE_TAG ?= latest
 SANDBOX_IMAGE ?= python:3.12-slim
 SERVER_PORT ?= 8080
 
+SERVER_DEPLOY_DIR := deploy/opensandbox-server
+PYTHON_CLIENT_DIR := examples/python-client
+CLI_CLIENT_DIR := examples/cli-client
+
 ACR_LOGIN_SERVER := $(ACR_NAME).azurecr.io
 SERVER_IMAGE := $(ACR_LOGIN_SERVER)/$(SERVER_IMAGE_NAME):$(SERVER_IMAGE_TAG)
 
@@ -205,7 +209,7 @@ _acr-login: check-vars
 	@az acr show --name "$(ACR_NAME)" --query loginServer -o tsv >/dev/null
 
 _image-build: check-vars
-	docker build -t "$(SERVER_IMAGE)" -f examples/opensandbox-kata/server.Dockerfile .
+	docker build -t "$(SERVER_IMAGE)" -f $(SERVER_DEPLOY_DIR)/Dockerfile .
 
 _image-push: check-vars
 	@set -euo pipefail; \
@@ -248,13 +252,13 @@ _k8s-deploy: check-vars check-api-key
 	fi
 	sed \
 		-e 's|__NAMESPACE__|$(OPEN_SANDBOX_NAMESPACE)|g' \
-		examples/opensandbox-kata/config/sandbox.toml | kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" create configmap opensandbox-server-config \
+		$(SERVER_DEPLOY_DIR)/config/sandbox.toml | kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" create configmap opensandbox-server-config \
 		--from-file=sandbox.toml=/dev/stdin \
 		--dry-run=client -o yaml | kubectl apply -f -
 	sed \
 		-e 's|__SERVER_IMAGE__|$(SERVER_IMAGE)|g' \
 		-e 's|__NAMESPACE__|$(OPEN_SANDBOX_NAMESPACE)|g' \
-		examples/opensandbox-kata/k8s/opensandbox-server.yaml | kubectl apply -f -
+		$(SERVER_DEPLOY_DIR)/k8s/opensandbox-server.yaml | kubectl apply -f -
 	kubectl rollout restart deployment/opensandbox-server -n "$(OPEN_SANDBOX_NAMESPACE)"
 	kubectl rollout status deployment/opensandbox-server -n "$(OPEN_SANDBOX_NAMESPACE)" --timeout=180s
 
@@ -270,8 +274,8 @@ _smoke-test:
 		test -n "$$smoke_api_key" || (echo "OPEN_SANDBOX_API_KEY is required, or deploy opensandbox-server with make k8s-deploy first"; exit 1); \
 		python3 -m venv .venv; \
 		. .venv/bin/activate; \
-		pip install -q -r examples/opensandbox-kata/requirements.txt; \
-		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_API_KEY="$$smoke_api_key" SANDBOX_IMAGE="$(SANDBOX_IMAGE)" VERIFY_KATA_WITH_KUBECTL=1 OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" python examples/opensandbox-kata/app.py
+		pip install -q -r $(PYTHON_CLIENT_DIR)/requirements.txt; \
+		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_API_KEY="$$smoke_api_key" SANDBOX_IMAGE="$(SANDBOX_IMAGE)" VERIFY_KATA_WITH_KUBECTL=1 OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" python $(PYTHON_CLIENT_DIR)/app.py
 
 _cli-smoke-test: check-smoke-tools
 	@set -euo pipefail; \
@@ -293,8 +297,8 @@ _cli-smoke-test: check-smoke-tools
 		test -n "$$cli_api_key" || (echo "OPEN_SANDBOX_API_KEY is required, or deploy opensandbox-server with make k8s-deploy first"; exit 1); \
 		python3 -m venv .venv; \
 		. .venv/bin/activate; \
-		pip install -q -r examples/opensandbox-kata/requirements.txt opensandbox-cli==$(OPEN_SANDBOX_CLI_VERSION); \
-		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_PROTOCOL=http OPEN_SANDBOX_API_KEY="$$cli_api_key" OPEN_SANDBOX_USE_SERVER_PROXY=true SANDBOX_IMAGE="$(SANDBOX_IMAGE)" VERIFY_KATA_WITH_KUBECTL=1 OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" OSB_BIN="$$(command -v osb)" bash examples/opensandbox-kata-cli/osb-cli-smoke.sh
+		pip install -q -r $(CLI_CLIENT_DIR)/requirements.txt opensandbox-cli==$(OPEN_SANDBOX_CLI_VERSION); \
+		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_PROTOCOL=http OPEN_SANDBOX_API_KEY="$$cli_api_key" OPEN_SANDBOX_USE_SERVER_PROXY=true SANDBOX_IMAGE="$(SANDBOX_IMAGE)" VERIFY_KATA_WITH_KUBECTL=1 OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" OSB_BIN="$$(command -v osb)" bash $(CLI_CLIENT_DIR)/osb-cli-smoke.sh
 
 status:
 	kubectl get runtimeclass

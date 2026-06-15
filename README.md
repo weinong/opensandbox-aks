@@ -7,8 +7,9 @@ The example provisions AKS and Azure Container Registry with Bicep, installs the
 ## Layout
 
 - `infra/`: Bicep templates for AKS and ACR.
-- `examples/opensandbox-kata/`: Python SDK smoke test, Kubernetes manifests, server config, and server Dockerfile.
-- `examples/opensandbox-kata-cli/`: `osb` CLI smoke test and step-by-step CLI instructions.
+- `deploy/opensandbox-server/`: OpenSandbox server Dockerfile, Kubernetes manifests, and server config.
+- `examples/python-client/`: Python SDK smoke test and step-by-step client instructions.
+- `examples/cli-client/`: `osb` CLI smoke test and step-by-step CLI instructions.
 - `Makefile`: Human-reproducible workflow.
 
 ## SKU Choice
@@ -91,8 +92,8 @@ OpenSandbox-created workload pods should show `kata-vm-isolation`.
 Treat `runtimeClassName`, not the `uname` release alone, as the primary proof that the OpenSandbox workload is using Kata. In this example the Kata path is configured in three places:
 
 - The AKS node pool is created with `workloadRuntime: 'KataMshvVmIsolation'` in `infra/main.bicep`.
-- OpenSandbox is configured with `k8s_runtime_class = "kata-vm-isolation"` in `examples/opensandbox-kata/config/sandbox.toml`.
-- The BatchSandbox template sets `runtimeClassName: kata-vm-isolation` in `examples/opensandbox-kata/k8s/batchsandbox-template.yaml`.
+- OpenSandbox is configured with `k8s_runtime_class = "kata-vm-isolation"` in `deploy/opensandbox-server/config/sandbox.toml`.
+- The BatchSandbox template sets `runtimeClassName: kata-vm-isolation` in `deploy/opensandbox-server/k8s/batchsandbox-template.yaml`.
 
 For a live comparison, create one regular pod and one Kata pod on the cluster, then compare their runtime classes and kernel strings:
 
