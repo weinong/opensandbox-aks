@@ -8,9 +8,10 @@ The example provisions AKS and Azure Container Registry with Bicep, installs the
 
 - `infra/`: Bicep templates for AKS and ACR.
 - `deploy/opensandbox-server/`: OpenSandbox server Dockerfile, Kubernetes manifests, and server config.
+- `deploy/gvisor-runtime/`: optional unsupported gVisor runtime installer and smoke test manifests for AKS nodes.
 - `examples/python-client/`: Python SDK smoke test and step-by-step client instructions.
 - `examples/cli-client/`: `osb` CLI smoke test and step-by-step CLI instructions.
-- `examples/gvisor-runtime/`: optional unsupported gVisor runtime installer and smoke test for AKS nodes.
+- `examples/gvisor-runtime/`: optional unsupported gVisor runtime usage notes.
 - `Makefile`: Human-reproducible workflow.
 
 ## SKU Choice

@@ -307,7 +307,7 @@ status:
 	kubectl get batchsandboxes -n "$(OPEN_SANDBOX_NAMESPACE)" || true
 
 gvisor-install:
-	kubectl apply -f examples/gvisor-runtime/k8s/gvisor-installer.yaml
+	kubectl apply -f deploy/gvisor-runtime/gvisor-installer.yaml
 	kubectl wait --for=condition=Complete job/gvisor-installer -n gvisor-install --timeout=300s
 	kubectl logs -n gvisor-install job/gvisor-installer
 	sleep 10
@@ -315,14 +315,14 @@ gvisor-install:
 	kubectl get runtimeclass gvisor
 
 gvisor-smoke-test:
-	kubectl apply -f examples/gvisor-runtime/k8s/gvisor-smoke-pod.yaml
+	kubectl apply -f deploy/gvisor-runtime/gvisor-smoke-pod.yaml
 	kubectl wait --for=condition=Ready pod/gvisor-smoke -n gvisor-install --timeout=240s
 	kubectl get pod gvisor-smoke -n gvisor-install -o jsonpath='{.metadata.name}{"\t"}{.spec.runtimeClassName}{"\t"}{.status.phase}{"\n"}'
 	kubectl exec -n gvisor-install gvisor-smoke -- uname -a
-	kubectl delete -f examples/gvisor-runtime/k8s/gvisor-smoke-pod.yaml --wait=false
+	kubectl delete -f deploy/gvisor-runtime/gvisor-smoke-pod.yaml --wait=false
 
 gvisor-clean:
-	kubectl delete -f examples/gvisor-runtime/k8s/gvisor-smoke-pod.yaml --ignore-not-found
+	kubectl delete -f deploy/gvisor-runtime/gvisor-smoke-pod.yaml --ignore-not-found
 	kubectl delete job gvisor-installer -n gvisor-install --ignore-not-found
 	kubectl delete configmap gvisor-installer-script -n gvisor-install --ignore-not-found
 	kubectl delete namespace gvisor-install --ignore-not-found
