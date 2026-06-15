@@ -1,0 +1,100 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gvisor-install
+---
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gvisor
+handler: runsc
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gvisor-installer-script
+  namespace: gvisor-install
+data:
+  install.sh: |
+    #!/bin/sh
+    set -eu
+
+    arch="$(chroot /host uname -m)"
+    case "$arch" in
+      x86_64) gvisor_arch=x86_64 ;;
+      aarch64) gvisor_arch=aarch64 ;;
+      *) echo "unsupported architecture: $arch" >&2; exit 1 ;;
+    esac
+
+    chroot /host /bin/sh -eu -c "
+      install -d -m 0755 /usr/local/bin /var/lib/opensandbox-gvisor
+      cd /var/lib/opensandbox-gvisor
+      base_url=\"https://storage.googleapis.com/gvisor/releases/release/latest/${gvisor_arch}\"
+      curl -fsSLO \"\$base_url/runsc\"
+      curl -fsSLO \"\$base_url/runsc.sha512\"
+      curl -fsSLO \"\$base_url/containerd-shim-runsc-v1\"
+      curl -fsSLO \"\$base_url/containerd-shim-runsc-v1.sha512\"
+      sha512sum -c runsc.sha512
+      sha512sum -c containerd-shim-runsc-v1.sha512
+      install -m 0755 runsc /usr/local/bin/runsc
+      install -m 0755 containerd-shim-runsc-v1 /usr/local/bin/containerd-shim-runsc-v1
+    "
+
+    if ! grep -q 'runtimes.runsc' /host/etc/containerd/config.toml; then
+      cp /host/etc/containerd/config.toml "/host/etc/containerd/config.toml.opensandbox-gvisor.$(date +%Y%m%d%H%M%S).bak"
+      cat >> /host/etc/containerd/config.toml <<'EOF'
+
+    [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc]
+      runtime_type = "io.containerd.runsc.v1"
+
+    [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc.options]
+      TypeUrl = "io.containerd.runsc.v1.options"
+      ConfigPath = "/etc/containerd/runsc.toml"
+    EOF
+    fi
+
+    cat > /host/etc/containerd/runsc.toml <<'EOF'
+    [runsc]
+    platform = "systrap"
+    debug = false
+    EOF
+
+    chroot /host /bin/sh -c 'nohup /bin/sh -c "sleep 2; systemctl restart containerd" >/var/log/opensandbox-gvisor-containerd-restart.log 2>&1 &'
+    echo "scheduled containerd restart"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gvisor-installer
+  namespace: gvisor-install
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: gvisor-installer
+    spec:
+      restartPolicy: Never
+      hostPID: true
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: installer
+          image: mcr.microsoft.com/cbl-mariner/base/core:2.0
+          command: ["/bin/sh", "/scripts/install.sh"]
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: host
+              mountPath: /host
+            - name: script
+              mountPath: /scripts
+      volumes:
+        - name: host
+          hostPath:
+            path: /
+            type: Directory
+        - name: script
+          configMap:
+            name: gvisor-installer-script
+            defaultMode: 0755
