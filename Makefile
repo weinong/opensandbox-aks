@@ -51,13 +51,23 @@ aks-credentials:
 	az aks get-credentials --resource-group "$(RESOURCE_GROUP)" --name "$(AKS_NAME)" --overwrite-existing
 
 acr-login: check-vars
-	az acr login --name "$(ACR_NAME)"
+	@az acr show --name "$(ACR_NAME)" --query loginServer -o tsv >/dev/null
 
 image-build: check-vars
 	docker build -t "$(SERVER_IMAGE)" -f examples/opensandbox-kata/server.Dockerfile .
 
 image-push: check-vars
-	docker push "$(SERVER_IMAGE)"
+	@set -euo pipefail; \
+		login_server=$$(az acr show --name "$(ACR_NAME)" --query loginServer -o tsv); \
+		test -n "$$login_server"; \
+		test "$(ACR_LOGIN_SERVER)" = "$$login_server"; \
+		docker_config=$$(mktemp -d); \
+		chmod 700 "$$docker_config"; \
+		trap 'DOCKER_CONFIG="$$docker_config" docker logout "'"$$login_server"'" >/dev/null 2>&1 || true; rm -rf "$$docker_config"' EXIT; \
+		token=$$(az acr login --name "$(ACR_NAME)" --expose-token --query accessToken -o tsv); \
+		test -n "$$token"; \
+		DOCKER_CONFIG="$$docker_config" docker login "$$login_server" --username 00000000-0000-0000-0000-000000000000 --password-stdin <<< "$$token"; \
+		DOCKER_CONFIG="$$docker_config" docker push "$(SERVER_IMAGE)"
 
 controller-install:
 	helm upgrade --install opensandbox-controller \
