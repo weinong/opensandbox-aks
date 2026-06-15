@@ -25,19 +25,17 @@ Use `Standard_DC8as_cc_v5` instead when you specifically need AKS Confidential C
 - `make`
 - `python3`
 - `curl`
-- `openssl` for the quick-start API key command, or any equivalent random secret generator
 
 ## Quick Start
 
-Set the required variables:
+Generate local environment config:
 
 ```bash
-export LOCATION=eastus
-export RESOURCE_GROUP=rg-opensandbox-kata
-export AKS_NAME=osb-kata-aks
-export ACR_NAME=<globally-unique-acr-name>
-export OPEN_SANDBOX_API_KEY=$(openssl rand -hex 32)
+make local-config
+make print-config
 ```
+
+The generated `.make.env` file is ignored by git and contains resource names, the current Azure subscription ID, and a local `OPEN_SANDBOX_API_KEY`. Edit it if you want specific names, region, node count, or fallback settings. Deploy and smoke-test targets create/backfill this file automatically when needed without overwriting existing values. If you use a custom `LOCAL_CONFIG` path, add it to `.gitignore` or `.git/info/exclude` before generating secrets.
 
 Run the end-to-end workflow:
 
@@ -58,6 +56,15 @@ make smoke-test
 make clean-k8s
 make infra-delete
 ```
+
+Cleanup targets require explicit confirmation to avoid deleting the wrong environment:
+
+```bash
+make clean-k8s CONFIRM_AKS_NAME=<your-aks-name> CONFIRM_RESOURCE_GROUP=<your-resource-group> CONFIRM_SUBSCRIPTION_ID=<your-subscription-id> CONFIRM_OPEN_SANDBOX_NAMESPACE=<your-namespace>
+make infra-delete CONFIRM_RESOURCE_GROUP=<your-resource-group> CONFIRM_SUBSCRIPTION_ID=<your-subscription-id>
+```
+
+For cleanup and deletion, identity values must come from `.make.env` or explicit make command-line variables such as `make clean-k8s AKS_NAME=... RESOURCE_GROUP=... SUBSCRIPTION_ID=... OPEN_SANDBOX_NAMESPACE=...`. Exported environment variables are intentionally rejected for these destructive targets.
 
 If your account cannot create role assignments, use ACR admin credentials for the sample server-image pull path. This fallback is selected only when both `ASSIGN_ACR_PULL_ROLE=false` and `ACR_ADMIN_USER_ENABLED=true` are set. It is less secure than the default managed-identity `AcrPull` path because ACR admin credentials are registry-wide credentials; use it only for disposable examples, then run `make clean-k8s`, disable ACR admin credentials, and rotate the ACR admin passwords when finished. The Makefile uses a short-lived `az acr login --expose-token` token in a per-push temporary Docker config for local image push and patches only the `opensandbox-server` ServiceAccount with the pull secret.
 
