@@ -26,6 +26,6 @@ type = "kata"
 k8s_runtime_class = "kata-vm-isolation"
 ```
 
-The AKS node pool is created with Bicep using `workloadRuntime: 'KataVmIsolation'`, which creates the matching `kata-vm-isolation` RuntimeClass.
+The AKS node pool is created with Bicep using `workloadRuntime: 'KataMshvVmIsolation'`, which creates the matching `kata-vm-isolation` RuntimeClass.
 
 Run from the repository root with `make all`.

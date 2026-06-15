@@ -17,6 +17,12 @@ param nodeCount int = 3
 @description('Optional Kubernetes version. Leave empty to use the AKS default for the region.')
 param kubernetesVersion string = ''
 
+@allowed([
+  'KataMshvVmIsolation'
+])
+@description('AKS pod sandboxing workload runtime. Newer AKS API versions require KataMshvVmIsolation.')
+param workloadRuntime string = 'KataMshvVmIsolation'
+
 @description('Create an AcrPull role assignment for the AKS kubelet identity. Requires Microsoft.Authorization/roleAssignments/write.')
 param assignAcrPullRole bool = true
 
@@ -54,7 +60,7 @@ var aksBaseProperties = {
       osType: 'Linux'
       osSKU: 'AzureLinux'
       type: 'VirtualMachineScaleSets'
-      workloadRuntime: 'KataVmIsolation'
+      workloadRuntime: workloadRuntime
       enableAutoScaling: false
     }
   ]
@@ -108,3 +114,4 @@ output kataRuntimeClass string = 'kata-vm-isolation'
 output recommendedSku string = nodeVmSize
 output confidentialContainerSku string = 'Standard_DC8as_cc_v5'
 output acrAdminUserEnabled bool = acrAdminUserEnabled
+output workloadRuntime string = workloadRuntime
