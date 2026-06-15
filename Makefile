@@ -6,6 +6,8 @@ AKS_NAME ?= osb-kata-aks
 ACR_NAME ?=
 NODE_VM_SIZE ?= Standard_D4s_v3
 NODE_COUNT ?= 3
+ASSIGN_ACR_PULL_ROLE ?= true
+ACR_ADMIN_USER_ENABLED ?= false
 OPEN_SANDBOX_NAMESPACE ?= opensandbox
 OPEN_SANDBOX_CONTROLLER_VERSION ?= 0.1.0
 SERVER_IMAGE_NAME ?= opensandbox-kata-server
@@ -30,6 +32,10 @@ check-tools:
 
 check-vars:
 	@test -n "$(ACR_NAME)" || (echo "ACR_NAME is required and must be globally unique"; exit 1)
+	@if [ "$(ASSIGN_ACR_PULL_ROLE)" = "false" ] && [ "$(ACR_ADMIN_USER_ENABLED)" != "true" ]; then \
+		echo "ACR_ADMIN_USER_ENABLED=true is required when ASSIGN_ACR_PULL_ROLE=false"; \
+		exit 1; \
+	fi
 
 check-api-key:
 	@test -n "$${OPEN_SANDBOX_API_KEY}" || (echo "OPEN_SANDBOX_API_KEY is required"; exit 1)
@@ -39,7 +45,7 @@ infra-deploy: check-vars
 	az deployment group create \
 		--resource-group "$(RESOURCE_GROUP)" \
 		--template-file infra/main.bicep \
-		--parameters aksName="$(AKS_NAME)" acrName="$(ACR_NAME)" location="$(LOCATION)" nodeVmSize="$(NODE_VM_SIZE)" nodeCount=$(NODE_COUNT)
+		--parameters aksName="$(AKS_NAME)" acrName="$(ACR_NAME)" location="$(LOCATION)" nodeVmSize="$(NODE_VM_SIZE)" nodeCount=$(NODE_COUNT) assignAcrPullRole=$(ASSIGN_ACR_PULL_ROLE) acrAdminUserEnabled=$(ACR_ADMIN_USER_ENABLED)
 
 aks-credentials:
 	az aks get-credentials --resource-group "$(RESOURCE_GROUP)" --name "$(AKS_NAME)" --overwrite-existing
@@ -65,9 +71,20 @@ controller-install:
 
 k8s-deploy: check-vars check-api-key
 	kubectl create namespace "$(OPEN_SANDBOX_NAMESPACE)" --dry-run=client -o yaml | kubectl apply -f -
+	kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" create serviceaccount opensandbox-server --dry-run=client -o yaml | kubectl apply -f -
 	kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" create secret generic opensandbox-server \
 		--from-literal=api-key="$${OPEN_SANDBOX_API_KEY}" \
 		--dry-run=client -o yaml | kubectl apply -f -
+	@if [ "$(ASSIGN_ACR_PULL_ROLE)" = "false" ] && [ "$(ACR_ADMIN_USER_ENABLED)" = "true" ]; then \
+		set -euo pipefail; \
+		password=$$(az acr credential show --name "$(ACR_NAME)" --query 'passwords[0].value' -o tsv); \
+		test -n "$$password"; \
+		kubectl delete secret acr-pull -n "$(OPEN_SANDBOX_NAMESPACE)" --ignore-not-found; \
+		printf '%s' "$$password" | REGISTRY="$(ACR_LOGIN_SERVER)" USERNAME="$(ACR_NAME)" NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" python3 -c 'import base64,json,os,sys; u=os.environ["USERNAME"]; p=sys.stdin.read(); r=os.environ["REGISTRY"]; ns=os.environ["NAMESPACE"]; auth=base64.b64encode(f"{u}:{p}".encode()).decode(); cfg={"auths":{r:{"username":u,"password":p,"auth":auth}}}; data=base64.b64encode(json.dumps(cfg,separators=(",",":")).encode()).decode(); print(f"apiVersion: v1\nkind: Secret\nmetadata:\n  name: acr-pull\n  namespace: {ns}\ntype: kubernetes.io/dockerconfigjson\ndata:\n  .dockerconfigjson: {data}\n")' | kubectl create -f -; \
+		kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" patch serviceaccount opensandbox-server \
+			--type merge \
+			--patch '{"imagePullSecrets":[{"name":"acr-pull"}]}'; \
+	fi
 	sed \
 		-e 's|__NAMESPACE__|$(OPEN_SANDBOX_NAMESPACE)|g' \
 		examples/opensandbox-kata/config/sandbox.toml | kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" create configmap opensandbox-server-config \

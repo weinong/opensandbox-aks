@@ -17,6 +17,12 @@ param nodeCount int = 3
 @description('Optional Kubernetes version. Leave empty to use the AKS default for the region.')
 param kubernetesVersion string = ''
 
+@description('Create an AcrPull role assignment for the AKS kubelet identity. Requires Microsoft.Authorization/roleAssignments/write.')
+param assignAcrPullRole bool = true
+
+@description('Enable ACR admin credentials. Intended for examples when role assignment permissions are unavailable.')
+param acrAdminUserEnabled bool = false
+
 @description('Tags applied to all resources.')
 param tags object = {
   workload: 'opensandbox-kata-example'
@@ -66,7 +72,7 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
     name: 'Basic'
   }
   properties: {
-    adminUserEnabled: false
+    adminUserEnabled: acrAdminUserEnabled
     publicNetworkAccess: 'Enabled'
   }
 }
@@ -86,7 +92,7 @@ resource acrPullRoleDefinition 'Microsoft.Authorization/roleDefinitions@2022-04-
   name: '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 }
 
-resource aksAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource aksAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignAcrPullRole) {
   name: guid(aks.id, acr.id, acrPullRoleDefinition.id)
   scope: acr
   properties: {
@@ -101,3 +107,4 @@ output acrLoginServer string = acr.properties.loginServer
 output kataRuntimeClass string = 'kata-vm-isolation'
 output recommendedSku string = nodeVmSize
 output confidentialContainerSku string = 'Standard_DC8as_cc_v5'
+output acrAdminUserEnabled bool = acrAdminUserEnabled
