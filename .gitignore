@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+infra/main.json
+.env
+.make.env
+.sandbox.toml
+*.log

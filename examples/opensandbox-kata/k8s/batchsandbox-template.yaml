@@ -1,0 +1,20 @@
+apiVersion: sandbox.opensandbox.io/v1alpha1
+kind: BatchSandbox
+metadata:
+  generateName: opensandbox-
+spec:
+  replicas: 1
+  template:
+    spec:
+      runtimeClassName: kata-vm-isolation
+      containers:
+        - name: sandbox-container
+          image: python:3.12-slim
+          command: ["tail", "-f", "/dev/null"]
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
