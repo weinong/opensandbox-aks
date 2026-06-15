@@ -13,6 +13,8 @@ The example provisions AKS and Azure Container Registry with Bicep, installs the
 - `examples/python-client/`: Python SDK smoke test and step-by-step client instructions.
 - `examples/cli-client/`: `osb` CLI smoke test and step-by-step CLI instructions.
 - `examples/gvisor-runtime/`: optional unsupported gVisor runtime usage notes.
+- `examples/pause-renew/`: Python SDK example for renewing expiration, pausing, resuming, and verifying persisted filesystem state.
+- `examples/pause-renew-cli/`: `osb` CLI example for the same renew, pause, and resume lifecycle.
 - `Makefile`: Human-reproducible workflow.
 
 ## SKU Choice
@@ -42,11 +44,15 @@ make print-config
 
 The generated `.make.env` file is ignored by git and contains resource names, the current Azure subscription ID, and a local `OPEN_SANDBOX_API_KEY`. Edit it if you want specific names, region, node count, or fallback settings. Deploy and smoke-test targets create/backfill this file automatically when needed without overwriting existing values. If you use a custom `LOCAL_CONFIG` path, add it to `.gitignore` or `.git/info/exclude` before generating secrets.
 
+By default this sample uses managed identity `AcrPull` for the server image path and does not create registry credentials. OpenSandbox pause/resume needs push and pull credentials for root filesystem snapshot images; for disposable examples, opt in with `ENABLE_SNAPSHOT_REGISTRY_SECRET=true ACR_ADMIN_USER_ENABLED=true`, or create your own `kubernetes.io/dockerconfigjson` secret named by `OPEN_SANDBOX_SNAPSHOT_SECRET` before pausing sandboxes.
+
 Run the end-to-end workflow:
 
 ```bash
 make all
 ```
+
+`make all` deploys the infrastructure, installs the controller and server, then runs the Python SDK smoke test. Run the pause/resume snapshot examples separately with `make pause-renew-example` or `make pause-renew-cli-example` after the deployment is healthy.
 
 Useful individual targets:
 
@@ -64,7 +70,10 @@ make gvisor-smoke-test
 make firecracker-nodepool-add
 make firecracker-install
 make firecracker-smoke-test
+make pause-renew-example
+make pause-renew-cli-example
 make clean-k8s
+make clean-opensandbox-crds
 make infra-delete
 ```
 
@@ -80,16 +89,58 @@ Cleanup targets require explicit confirmation to avoid deleting the wrong enviro
 
 ```bash
 make clean-k8s CONFIRM_AKS_NAME=<your-aks-name> CONFIRM_RESOURCE_GROUP=<your-resource-group> CONFIRM_SUBSCRIPTION_ID=<your-subscription-id> CONFIRM_OPEN_SANDBOX_NAMESPACE=<your-namespace>
+make clean-opensandbox-crds CONFIRM_AKS_NAME=<your-aks-name> CONFIRM_RESOURCE_GROUP=<your-resource-group> CONFIRM_SUBSCRIPTION_ID=<your-subscription-id> CONFIRM_DELETE_OPEN_SANDBOX_CRDS=delete-cluster-wide-opensandbox-crds
 make infra-delete CONFIRM_RESOURCE_GROUP=<your-resource-group> CONFIRM_SUBSCRIPTION_ID=<your-subscription-id>
 ```
 
 For cleanup and deletion, identity values must come from `.make.env` or explicit make command-line variables such as `make clean-k8s AKS_NAME=... RESOURCE_GROUP=... SUBSCRIPTION_ID=... OPEN_SANDBOX_NAMESPACE=...`. Exported environment variables are intentionally rejected for these destructive targets.
 
-If your account cannot create role assignments, use ACR admin credentials for the sample server-image pull path. This fallback is selected only when both `ASSIGN_ACR_PULL_ROLE=false` and `ACR_ADMIN_USER_ENABLED=true` are set. It is less secure than the default managed-identity `AcrPull` path because ACR admin credentials are registry-wide credentials; use it only for disposable examples, then run `make clean-k8s`, disable ACR admin credentials, and rotate the ACR admin passwords when finished. The Makefile uses a short-lived `az acr login --expose-token` token in a per-push temporary Docker config for local image push and patches only the `opensandbox-server` ServiceAccount with the pull secret.
+If your account cannot create role assignments, use the same ACR admin credentials for the sample server-image pull path. This fallback is selected only when both `ASSIGN_ACR_PULL_ROLE=false` and `ACR_ADMIN_USER_ENABLED=true` are set. It is less secure than the default managed-identity `AcrPull` path because ACR admin credentials are registry-wide credentials; use it only for disposable examples, then run `make clean-k8s`, disable ACR admin credentials, and rotate the ACR admin passwords when finished. The Makefile uses a short-lived `az acr login --expose-token` token in a per-push temporary Docker config for local image push and patches only the `opensandbox-server` ServiceAccount with the pull secret.
 
 ```bash
 make all ASSIGN_ACR_PULL_ROLE=false ACR_ADMIN_USER_ENABLED=true
 ```
+
+## Pause And Resume
+
+OpenSandbox pause/resume requires controller support in addition to the lifecycle server API. This repo installs OpenSandbox controller `0.2.0` because older `0.1.0` CRDs do not include `BatchSandbox.spec.pause`, `BatchSandbox.status.phase`, or the `SandboxSnapshot` resource required by pause/resume.
+
+The controller commits the sandbox root filesystem to an OCI image and stores it under `OPEN_SANDBOX_SNAPSHOT_REGISTRY`, which defaults to `<acr>.azurecr.io/opensandbox-snapshots`. Pause/resume currently supports single-replica sandboxes, which is what this sample creates.
+
+For a disposable sample environment backed by this repo's ACR, let the Makefile create the snapshot push/pull secret:
+
+```bash
+make all ACR_ADMIN_USER_ENABLED=true ENABLE_SNAPSHOT_REGISTRY_SECRET=true
+```
+
+ACR admin credentials are registry-wide credentials stored in a Kubernetes docker config secret. Prefer a scoped registry credential for durable environments, and rotate or disable ACR admin credentials after disposable testing.
+
+Useful checks after `make controller-install`:
+
+```bash
+kubectl get crd batchsandboxes.sandbox.opensandbox.io \
+  -o jsonpath='{.spec.versions[?(@.name=="v1alpha1")].schema.openAPIV3Schema.properties.spec.properties.pause.type}{"\n"}'
+kubectl get crd sandboxsnapshots.sandbox.opensandbox.io
+kubectl get deploy -n opensandbox-system -l control-plane=controller-manager
+```
+
+If an existing cluster was previously installed with controller `0.1.0`, rerun `make controller-install`. If `sandboxsnapshots.sandbox.opensandbox.io` is still missing or the `pause` jsonpath above does not print `boolean`, first use the disposable-environment reset path: `make clean-k8s` followed by `make controller-install` and `make k8s-deploy`. If stale cluster-scoped CRDs still block the upgrade, run `make clean-opensandbox-crds` with its explicit confirmation string. That target deletes OpenSandbox CRDs and all matching custom resources cluster-wide, so do not use it on a shared cluster or on a cluster with OpenSandbox resources you need to keep.
+
+Pause/resume preserves root filesystem changes but does not checkpoint process memory or running processes. After resume, the sandbox starts from the committed image using the same sandbox ID.
+
+The `examples/pause-renew/` example demonstrates the complete flow from the Python SDK:
+
+```bash
+make pause-renew-example
+```
+
+The `examples/pause-renew-cli/` example demonstrates the same flow with the `osb` CLI:
+
+```bash
+make pause-renew-cli-example
+```
+
+Both examples create a sandbox, renew the expiration by 30 minutes, write a file under `/tmp`, pause the sandbox, wait until the lifecycle server reports state `Paused`, optionally check the backing `BatchSandbox` reports `status.phase=Paused`, resume the same sandbox ID, read the file back, run a command after resume, and kill the sandbox. The important distinction is that `renew` extends how long the lifecycle service keeps the sandbox before automatic cleanup, while `pause` releases the running Kubernetes workload after snapshotting the root filesystem, and `resume` recreates the workload from that snapshot.
 
 ## Validation
 

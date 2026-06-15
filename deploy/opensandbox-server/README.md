@@ -8,6 +8,8 @@ This deployment packages the upstream OpenSandbox lifecycle server for AKS and c
 - OpenSandbox lifecycle server, built from `Dockerfile`.
 - Kubernetes manifests and server configuration for the lifecycle server.
 
+The Makefile installs controller chart `0.2.0` so BatchSandbox pause/resume is available. Pause/resume depends on the `SandboxSnapshot` CRD and `BatchSandbox.spec.pause`; older controller releases do not provide those fields.
+
 ## Runtime Configuration
 
 `config/sandbox.toml` uses:
@@ -27,5 +29,18 @@ k8s_runtime_class = "kata-vm-isolation"
 ```
 
 The AKS node pool is created with Bicep using `workloadRuntime: 'KataMshvVmIsolation'`, which creates the matching `kata-vm-isolation` RuntimeClass.
+
+## Pause/Resume Snapshot Configuration
+
+`make controller-install` passes snapshot settings to the controller:
+
+```text
+controller.snapshot.registry=$(OPEN_SANDBOX_SNAPSHOT_REGISTRY)
+controller.snapshot.snapshotPushSecret=$(OPEN_SANDBOX_SNAPSHOT_SECRET)
+controller.snapshot.resumePullSecret=$(OPEN_SANDBOX_SNAPSHOT_SECRET)
+controller.snapshot.imageCommitterImage=$(OPEN_SANDBOX_IMAGE_COMMITTER_IMAGE)
+```
+
+`make k8s-deploy` creates `OPEN_SANDBOX_SNAPSHOT_SECRET` as a docker-registry secret only when both `ENABLE_SNAPSHOT_REGISTRY_SECRET=true` and `ACR_ADMIN_USER_ENABLED=true` are set. Otherwise, create an equivalent `kubernetes.io/dockerconfigjson` secret in the sandbox namespace before calling `sandbox pause`.
 
 Deploy from the repository root with `make k8s-deploy`, or run the full workflow with `make all`.
