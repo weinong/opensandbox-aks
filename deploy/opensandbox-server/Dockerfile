@@ -8,7 +8,7 @@ WORKDIR /app
 
 RUN pip install --no-cache-dir opensandbox-server==0.1.14
 
-COPY examples/opensandbox-kata/k8s/batchsandbox-template.yaml /app/batchsandbox-template.yaml
+COPY deploy/opensandbox-server/k8s/batchsandbox-template.yaml /app/batchsandbox-template.yaml
 
 EXPOSE 8080
 

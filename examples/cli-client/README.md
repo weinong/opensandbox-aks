@@ -27,7 +27,7 @@ Install the CLI into the repository virtual environment:
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
-pip install -r examples/opensandbox-kata/requirements.txt opensandbox-cli==0.1.1
+pip install -r examples/cli-client/requirements.txt opensandbox-cli==0.1.1
 ```
 
 Port-forward the OpenSandbox server:
