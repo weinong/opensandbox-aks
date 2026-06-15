@@ -258,16 +258,20 @@ _k8s-deploy: check-vars check-api-key
 smoke-test: local-config
 	@$(MAKE) --no-print-directory LOCAL_CONFIG="$(LOCAL_CONFIG)" _smoke-test
 
-_smoke-test: check-api-key
-	kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" port-forward svc/opensandbox-server $(SERVER_PORT):8080 >/tmp/opensandbox-kata-port-forward.log 2>&1 & echo $$! > /tmp/opensandbox-kata-port-forward.pid
-	set -e; \
-		trap 'kill $$(cat /tmp/opensandbox-kata-port-forward.pid) >/dev/null 2>&1 || true' EXIT; \
-		for i in {1..30}; do curl -fsS http://localhost:$(SERVER_PORT)/health >/dev/null && break || sleep 1; done; \
+_smoke-test:
+	@set -e; \
+		kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" port-forward svc/opensandbox-server $(SERVER_PORT):8080 >/tmp/opensandbox-kata-port-forward.log 2>&1 & \
+		port_forward_pid=$$!; \
+		trap 'kill $$port_forward_pid >/dev/null 2>&1 || true' EXIT; \
+		for i in {1..30}; do curl -fsS http://localhost:$(SERVER_PORT)/health >/dev/null 2>&1 && break || sleep 1; done; \
 		curl -fsS http://localhost:$(SERVER_PORT)/health >/dev/null; \
+		smoke_api_key=$$(kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" get secret opensandbox-server -o jsonpath='{.data.api-key}' 2>/dev/null | base64 -d 2>/dev/null || true); \
+		smoke_api_key="$${smoke_api_key:-$${OPEN_SANDBOX_API_KEY}}"; \
+		test -n "$$smoke_api_key" || (echo "OPEN_SANDBOX_API_KEY is required, or deploy opensandbox-server with make k8s-deploy first"; exit 1); \
 		python3 -m venv .venv; \
 		. .venv/bin/activate; \
 		pip install -q -r examples/opensandbox-kata/requirements.txt; \
-		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_API_KEY="$${OPEN_SANDBOX_API_KEY}" SANDBOX_IMAGE="$(SANDBOX_IMAGE)" VERIFY_KATA_WITH_KUBECTL=1 OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" python examples/opensandbox-kata/app.py
+		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_API_KEY="$$smoke_api_key" SANDBOX_IMAGE="$(SANDBOX_IMAGE)" VERIFY_KATA_WITH_KUBECTL=1 OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" python examples/opensandbox-kata/app.py
 
 status:
 	kubectl get runtimeclass
