@@ -104,6 +104,7 @@ k8s-deploy: check-vars check-api-key
 		-e 's|__SERVER_IMAGE__|$(SERVER_IMAGE)|g' \
 		-e 's|__NAMESPACE__|$(OPEN_SANDBOX_NAMESPACE)|g' \
 		examples/opensandbox-kata/k8s/opensandbox-server.yaml | kubectl apply -f -
+	kubectl rollout restart deployment/opensandbox-server -n "$(OPEN_SANDBOX_NAMESPACE)"
 	kubectl rollout status deployment/opensandbox-server -n "$(OPEN_SANDBOX_NAMESPACE)" --timeout=180s
 
 smoke-test: check-api-key
