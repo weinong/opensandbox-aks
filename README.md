@@ -81,3 +81,63 @@ kubectl get pods -n opensandbox -o jsonpath='{range .items[*]}{.metadata.name}{"
 ```
 
 OpenSandbox-created workload pods should show `kata-vm-isolation`.
+
+### Why the sandbox kernel can look like the node kernel
+
+`uname -a` inside a sandbox reports the kernel release and build string visible inside that workload. With AKS Pod Sandboxing, a Kata pod runs in a lightweight Pod VM with its own guest kernel, but AKS can use the same Azure Linux kernel release family for both the node and the Kata guest. Because of that, the release string can match the node's release, for example `6.6.137.mshv1-1.azl3`, even though the pod is using the Kata runtime path.
+
+Treat `runtimeClassName`, not the `uname` release alone, as the primary proof that the OpenSandbox workload is using Kata. In this example the Kata path is configured in three places:
+
+- The AKS node pool is created with `workloadRuntime: 'KataMshvVmIsolation'` in `infra/main.bicep`.
+- OpenSandbox is configured with `k8s_runtime_class = "kata-vm-isolation"` in `examples/opensandbox-kata/config/sandbox.toml`.
+- The BatchSandbox template sets `runtimeClassName: kata-vm-isolation` in `examples/opensandbox-kata/k8s/batchsandbox-template.yaml`.
+
+For a live comparison, create one regular pod and one Kata pod on the cluster, then compare their runtime classes and kernel strings:
+
+```bash
+kubectl run proof-normal -n opensandbox --image=python:3.12-slim --restart=Never --command -- sleep 3600
+
+kubectl apply -n opensandbox -f - <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: proof-kata
+spec:
+  runtimeClassName: kata-vm-isolation
+  containers:
+  - name: proof
+    image: python:3.12-slim
+    command: ["sleep", "3600"]
+    resources:
+      requests:
+        cpu: "250m"
+        memory: "512Mi"
+      limits:
+        cpu: "500m"
+        memory: "512Mi"
+  restartPolicy: Never
+EOF
+
+kubectl wait --for=condition=Ready pod/proof-normal -n opensandbox --timeout=180s
+kubectl wait --for=condition=Ready pod/proof-kata -n opensandbox --timeout=180s
+
+kubectl get pods proof-normal proof-kata -n opensandbox \
+  -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.runtimeClassName}{"\t"}{.spec.nodeName}{"\n"}{end}'
+
+kubectl exec -n opensandbox proof-normal -- uname -a
+kubectl exec -n opensandbox proof-kata -- uname -a
+
+kubectl delete pod proof-normal proof-kata -n opensandbox --ignore-not-found
+```
+
+Example output from this cluster showed both pods on the same node and both using the same kernel release, while only the Kata pod had `runtimeClassName: kata-vm-isolation`:
+
+```text
+proof-normal        <empty>               <same-node-name>
+proof-kata          kata-vm-isolation     <same-node-name>
+
+Linux proof-normal 6.6.137.mshv1-1.azl3 #1 SMP Tue May 19 17:27:14 UTC 2026 x86_64 GNU/Linux
+Linux proof-kata   6.6.137.mshv1-1.azl3 #1 SMP Tue May 19 17:02:13 UTC 2026 x86_64 GNU/Linux
+```
+
+The matching release confirms that `uname` alone is not an isolation test. The Kata runtime class, runtime handler, scheduling selector, and Kata pod overhead are the Kubernetes-level evidence that the workload is using AKS Pod Sandboxing.
