@@ -44,10 +44,30 @@ SERVER_PORT ?= 8080
 ACR_LOGIN_SERVER := $(ACR_NAME).azurecr.io
 SERVER_IMAGE := $(ACR_LOGIN_SERVER)/$(SERVER_IMAGE_NAME):$(SERVER_IMAGE_TAG)
 
-.PHONY: all local-config print-config check-tools check-vars check-api-key infra-deploy aks-credentials acr-login image-build image-push controller-install k8s-deploy smoke-test status clean-k8s infra-delete _all _print-config _infra-deploy _aks-credentials _acr-login _image-build _image-push _controller-install _k8s-deploy _smoke-test
+CONFIGURED_TARGETS := all print-config infra-deploy aks-credentials acr-login image-build image-push controller-install k8s-deploy smoke-test
+INTERNAL_TARGETS := $(addprefix _,$(CONFIGURED_TARGETS))
+MAKEFILE_PATH := $(abspath $(firstword $(MAKEFILE_LIST)))
 
-all: local-config
-	@$(MAKE) --no-print-directory LOCAL_CONFIG="$(LOCAL_CONFIG)" _all
+.PHONY: $(CONFIGURED_TARGETS) $(INTERNAL_TARGETS) local-config check-tools check-vars check-api-key status clean-k8s infra-delete
+
+define configured_target
+$1: local-config
+	@$$(MAKE) --no-print-directory -f "$$(MAKEFILE_PATH)" LOCAL_CONFIG="$$(LOCAL_CONFIG)" _$1
+endef
+
+define reject_env_var
+@if [ "$(origin $(1))" = "environment" ]; then echo "For $(2), pass $(1) explicitly on the make command line or store it in $(LOCAL_CONFIG); environment values are not accepted"; exit 1; fi
+endef
+
+define require_cli_or_config
+@if [ "$(origin $(1))" != "command line" ] && ! grep -Eq '^(export[[:space:]]+)?$(1)[[:space:]]*([?:+]?=|=)' "$(LOCAL_CONFIG)" 2>/dev/null; then echo "$(LOCAL_CONFIG) is missing $(1); run make local-config or pass $(1) explicitly on the make command line"; exit 1; fi
+endef
+
+define confirm_var
+@if [ "$(CONFIRM_$(1))" != "$($(1))" ]; then echo "Set CONFIRM_$(1)=$($(1)) to $(2)"; exit 1; fi
+endef
+
+$(foreach target,$(CONFIGURED_TARGETS),$(eval $(call configured_target,$(target))))
 
 _all: check-tools check-api-key _infra-deploy _aks-credentials _acr-login _image-build _image-push _controller-install _k8s-deploy _smoke-test
 
@@ -131,10 +151,6 @@ local-config:
 			echo "Using $$file"; \
 		fi
 
-print-config: local-config
-	@$(MAKE) --no-print-directory -f $(firstword $(MAKEFILE_LIST)) LOCAL_CONFIG="$(LOCAL_CONFIG)" _print-config
-
-.PHONY: _print-config
 _print-config:
 	@echo "LOCAL_CONFIG=$(LOCAL_CONFIG)"
 	@echo "RESOURCE_GROUP=$(RESOURCE_GROUP)"
@@ -167,9 +183,6 @@ check-vars:
 check-api-key:
 	@test -n "$${OPEN_SANDBOX_API_KEY}" || (echo "OPEN_SANDBOX_API_KEY is required"; exit 1)
 
-infra-deploy: local-config
-	@$(MAKE) --no-print-directory LOCAL_CONFIG="$(LOCAL_CONFIG)" _infra-deploy
-
 _infra-deploy: check-vars
 	az group create --name "$(RESOURCE_GROUP)" --location "$(LOCATION)"
 	az deployment group create \
@@ -177,26 +190,14 @@ _infra-deploy: check-vars
 		--template-file infra/main.bicep \
 		--parameters aksName="$(AKS_NAME)" acrName="$(ACR_NAME)" location="$(LOCATION)" nodeVmSize="$(NODE_VM_SIZE)" nodeCount=$(NODE_COUNT) assignAcrPullRole=$(ASSIGN_ACR_PULL_ROLE) acrAdminUserEnabled=$(ACR_ADMIN_USER_ENABLED)
 
-aks-credentials: local-config
-	@$(MAKE) --no-print-directory LOCAL_CONFIG="$(LOCAL_CONFIG)" _aks-credentials
-
 _aks-credentials:
 	az aks get-credentials --resource-group "$(RESOURCE_GROUP)" --name "$(AKS_NAME)" --overwrite-existing
-
-acr-login: local-config
-	@$(MAKE) --no-print-directory LOCAL_CONFIG="$(LOCAL_CONFIG)" _acr-login
 
 _acr-login: check-vars
 	@az acr show --name "$(ACR_NAME)" --query loginServer -o tsv >/dev/null
 
-image-build: local-config
-	@$(MAKE) --no-print-directory LOCAL_CONFIG="$(LOCAL_CONFIG)" _image-build
-
 _image-build: check-vars
 	docker build -t "$(SERVER_IMAGE)" -f examples/opensandbox-kata/server.Dockerfile .
-
-image-push: local-config
-	@$(MAKE) --no-print-directory LOCAL_CONFIG="$(LOCAL_CONFIG)" _image-push
 
 _image-push: check-vars
 	@set -euo pipefail; \
@@ -211,9 +212,6 @@ _image-push: check-vars
 		DOCKER_CONFIG="$$docker_config" docker login "$$login_server" --username 00000000-0000-0000-0000-000000000000 --password-stdin <<< "$$token"; \
 		DOCKER_CONFIG="$$docker_config" docker push "$(SERVER_IMAGE)"
 
-controller-install: local-config
-	@$(MAKE) --no-print-directory LOCAL_CONFIG="$(LOCAL_CONFIG)" _controller-install
-
 _controller-install:
 	helm upgrade --install opensandbox-controller \
 		https://github.com/opensandbox-group/OpenSandbox/releases/download/helm/opensandbox-controller/$(OPEN_SANDBOX_CONTROLLER_VERSION)/opensandbox-controller-$(OPEN_SANDBOX_CONTROLLER_VERSION).tgz \
@@ -223,9 +221,6 @@ _controller-install:
 	kubectl wait --for=condition=Established crd/pools.sandbox.opensandbox.io --timeout=180s
 	kubectl wait --for=condition=ready pod -l control-plane=controller-manager -n opensandbox-system --timeout=180s
 	kubectl get runtimeclass kata-vm-isolation
-
-k8s-deploy: local-config
-	@$(MAKE) --no-print-directory LOCAL_CONFIG="$(LOCAL_CONFIG)" _k8s-deploy
 
 _k8s-deploy: check-vars check-api-key
 	kubectl create namespace "$(OPEN_SANDBOX_NAMESPACE)" --dry-run=client -o yaml | kubectl apply -f -
@@ -255,9 +250,6 @@ _k8s-deploy: check-vars check-api-key
 	kubectl rollout restart deployment/opensandbox-server -n "$(OPEN_SANDBOX_NAMESPACE)"
 	kubectl rollout status deployment/opensandbox-server -n "$(OPEN_SANDBOX_NAMESPACE)" --timeout=180s
 
-smoke-test: local-config
-	@$(MAKE) --no-print-directory LOCAL_CONFIG="$(LOCAL_CONFIG)" _smoke-test
-
 _smoke-test:
 	@set -e; \
 		kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" port-forward svc/opensandbox-server $(SERVER_PORT):8080 >/tmp/opensandbox-kata-port-forward.log 2>&1 & \
@@ -280,18 +272,18 @@ status:
 	kubectl get batchsandboxes -n "$(OPEN_SANDBOX_NAMESPACE)" || true
 
 clean-k8s:
-	@if [ "$(origin AKS_NAME)" = "environment" ]; then echo "For cleanup, pass AKS_NAME explicitly on the make command line or store it in $(LOCAL_CONFIG); environment values are not accepted"; exit 1; fi
-	@if [ "$(origin RESOURCE_GROUP)" = "environment" ]; then echo "For cleanup, pass RESOURCE_GROUP explicitly on the make command line or store it in $(LOCAL_CONFIG); environment values are not accepted"; exit 1; fi
-	@if [ "$(origin SUBSCRIPTION_ID)" = "environment" ]; then echo "For cleanup, pass SUBSCRIPTION_ID explicitly on the make command line or store it in $(LOCAL_CONFIG); environment values are not accepted"; exit 1; fi
-	@if [ "$(origin OPEN_SANDBOX_NAMESPACE)" = "environment" ]; then echo "For cleanup, pass OPEN_SANDBOX_NAMESPACE explicitly on the make command line or store it in $(LOCAL_CONFIG); environment values are not accepted"; exit 1; fi
-	@if [ "$(origin AKS_NAME)" != "command line" ] && ! grep -Eq '^(export[[:space:]]+)?AKS_NAME[[:space:]]*([?:+]?=|=)' "$(LOCAL_CONFIG)" 2>/dev/null; then echo "$(LOCAL_CONFIG) is missing AKS_NAME; run make local-config or pass AKS_NAME explicitly on the make command line"; exit 1; fi
-	@if [ "$(origin RESOURCE_GROUP)" != "command line" ] && ! grep -Eq '^(export[[:space:]]+)?RESOURCE_GROUP[[:space:]]*([?:+]?=|=)' "$(LOCAL_CONFIG)" 2>/dev/null; then echo "$(LOCAL_CONFIG) is missing RESOURCE_GROUP; run make local-config or pass RESOURCE_GROUP explicitly on the make command line"; exit 1; fi
-	@if [ "$(origin SUBSCRIPTION_ID)" != "command line" ] && ! grep -Eq '^(export[[:space:]]+)?SUBSCRIPTION_ID[[:space:]]*([?:+]?=|=)' "$(LOCAL_CONFIG)" 2>/dev/null; then echo "$(LOCAL_CONFIG) is missing SUBSCRIPTION_ID; run make local-config or pass SUBSCRIPTION_ID explicitly on the make command line"; exit 1; fi
-	@if [ "$(origin OPEN_SANDBOX_NAMESPACE)" != "command line" ] && ! grep -Eq '^(export[[:space:]]+)?OPEN_SANDBOX_NAMESPACE[[:space:]]*([?:+]?=|=)' "$(LOCAL_CONFIG)" 2>/dev/null; then echo "$(LOCAL_CONFIG) is missing OPEN_SANDBOX_NAMESPACE; run make local-config or pass OPEN_SANDBOX_NAMESPACE explicitly on the make command line"; exit 1; fi
-	@if [ "$(CONFIRM_AKS_NAME)" != "$(AKS_NAME)" ]; then echo "Set CONFIRM_AKS_NAME=$(AKS_NAME) to clean Kubernetes resources"; exit 1; fi
-	@if [ "$(CONFIRM_RESOURCE_GROUP)" != "$(RESOURCE_GROUP)" ]; then echo "Set CONFIRM_RESOURCE_GROUP=$(RESOURCE_GROUP) to clean Kubernetes resources"; exit 1; fi
-	@if [ "$(CONFIRM_SUBSCRIPTION_ID)" != "$(SUBSCRIPTION_ID)" ]; then echo "Set CONFIRM_SUBSCRIPTION_ID=$(SUBSCRIPTION_ID) to clean Kubernetes resources"; exit 1; fi
-	@if [ "$(CONFIRM_OPEN_SANDBOX_NAMESPACE)" != "$(OPEN_SANDBOX_NAMESPACE)" ]; then echo "Set CONFIRM_OPEN_SANDBOX_NAMESPACE=$(OPEN_SANDBOX_NAMESPACE) to clean Kubernetes resources"; exit 1; fi
+	$(call reject_env_var,AKS_NAME,cleanup)
+	$(call reject_env_var,RESOURCE_GROUP,cleanup)
+	$(call reject_env_var,SUBSCRIPTION_ID,cleanup)
+	$(call reject_env_var,OPEN_SANDBOX_NAMESPACE,cleanup)
+	$(call require_cli_or_config,AKS_NAME)
+	$(call require_cli_or_config,RESOURCE_GROUP)
+	$(call require_cli_or_config,SUBSCRIPTION_ID)
+	$(call require_cli_or_config,OPEN_SANDBOX_NAMESPACE)
+	$(call confirm_var,AKS_NAME,clean Kubernetes resources)
+	$(call confirm_var,RESOURCE_GROUP,clean Kubernetes resources)
+	$(call confirm_var,SUBSCRIPTION_ID,clean Kubernetes resources)
+	$(call confirm_var,OPEN_SANDBOX_NAMESPACE,clean Kubernetes resources)
 	@set -euo pipefail; \
 		expected_kubeconfig=$$(mktemp); \
 		trap 'rm -f "$$expected_kubeconfig"' EXIT; \
@@ -305,12 +297,12 @@ clean-k8s:
 	kubectl delete namespace opensandbox-system --ignore-not-found
 
 infra-delete:
-	@if [ "$(origin RESOURCE_GROUP)" = "environment" ]; then echo "For deletion, pass RESOURCE_GROUP explicitly on the make command line or store it in $(LOCAL_CONFIG); environment values are not accepted"; exit 1; fi
-	@if [ "$(origin SUBSCRIPTION_ID)" = "environment" ]; then echo "For deletion, pass SUBSCRIPTION_ID explicitly on the make command line or store it in $(LOCAL_CONFIG); environment values are not accepted"; exit 1; fi
-	@if [ "$(origin RESOURCE_GROUP)" != "command line" ] && ! grep -Eq '^(export[[:space:]]+)?RESOURCE_GROUP[[:space:]]*([?:+]?=|=)' "$(LOCAL_CONFIG)" 2>/dev/null; then echo "$(LOCAL_CONFIG) is missing RESOURCE_GROUP; run make local-config or pass RESOURCE_GROUP explicitly on the make command line"; exit 1; fi
-	@if [ "$(origin SUBSCRIPTION_ID)" != "command line" ] && ! grep -Eq '^(export[[:space:]]+)?SUBSCRIPTION_ID[[:space:]]*([?:+]?=|=)' "$(LOCAL_CONFIG)" 2>/dev/null; then echo "$(LOCAL_CONFIG) is missing SUBSCRIPTION_ID; run make local-config or pass SUBSCRIPTION_ID explicitly on the make command line"; exit 1; fi
-	@if [ "$(CONFIRM_RESOURCE_GROUP)" != "$(RESOURCE_GROUP)" ]; then echo "Set CONFIRM_RESOURCE_GROUP=$(RESOURCE_GROUP) to delete infrastructure"; exit 1; fi
-	@if [ "$(CONFIRM_SUBSCRIPTION_ID)" != "$(SUBSCRIPTION_ID)" ]; then echo "Set CONFIRM_SUBSCRIPTION_ID=$(SUBSCRIPTION_ID) to delete infrastructure"; exit 1; fi
+	$(call reject_env_var,RESOURCE_GROUP,deletion)
+	$(call reject_env_var,SUBSCRIPTION_ID,deletion)
+	$(call require_cli_or_config,RESOURCE_GROUP)
+	$(call require_cli_or_config,SUBSCRIPTION_ID)
+	$(call confirm_var,RESOURCE_GROUP,delete infrastructure)
+	$(call confirm_var,SUBSCRIPTION_ID,delete infrastructure)
 	@current_subscription=$$(az account show --query id -o tsv); \
 		if [ "$$current_subscription" != "$(SUBSCRIPTION_ID)" ]; then echo "Current Azure subscription '$$current_subscription' does not match $(SUBSCRIPTION_ID)"; exit 1; fi
 	az group delete --name "$(RESOURCE_GROUP)" --subscription "$(SUBSCRIPTION_ID)" --yes --no-wait
