@@ -8,6 +8,7 @@ The example provisions AKS and Azure Container Registry with Bicep, installs the
 
 - `infra/`: Bicep templates for AKS and ACR.
 - `examples/opensandbox-kata/`: Python SDK smoke test, Kubernetes manifests, server config, and server Dockerfile.
+- `examples/opensandbox-kata-cli/`: `osb` CLI smoke test and step-by-step CLI instructions.
 - `Makefile`: Human-reproducible workflow.
 
 ## SKU Choice
@@ -53,6 +54,7 @@ make image-build
 make image-push
 make k8s-deploy
 make smoke-test
+make cli-smoke-test
 make clean-k8s
 make infra-delete
 ```
