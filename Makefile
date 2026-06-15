@@ -53,7 +53,7 @@ CONFIGURED_TARGETS := all print-config infra-deploy aks-credentials acr-login im
 INTERNAL_TARGETS := $(addprefix _,$(CONFIGURED_TARGETS))
 MAKEFILE_PATH := $(abspath $(firstword $(MAKEFILE_LIST)))
 
-.PHONY: $(CONFIGURED_TARGETS) $(INTERNAL_TARGETS) local-config check-tools check-smoke-tools check-vars check-api-key status clean-k8s infra-delete
+.PHONY: $(CONFIGURED_TARGETS) $(INTERNAL_TARGETS) local-config check-tools check-smoke-tools check-acr-vars check-api-key status clean-k8s infra-delete gvisor-install gvisor-smoke-test gvisor-clean
 
 define configured_target
 $1: local-config
@@ -185,7 +185,7 @@ check-smoke-tools:
 	@command -v python3 >/dev/null || (echo "python3 is required"; exit 1)
 	@command -v curl >/dev/null || (echo "curl is required"; exit 1)
 
-check-vars:
+check-acr-vars:
 	@test -n "$(ACR_NAME)" || (echo "ACR_NAME is required and must be globally unique"; exit 1)
 	@if [ "$(ASSIGN_ACR_PULL_ROLE)" = "false" ] && [ "$(ACR_ADMIN_USER_ENABLED)" != "true" ]; then \
 		echo "ACR_ADMIN_USER_ENABLED=true is required when ASSIGN_ACR_PULL_ROLE=false"; \
@@ -195,7 +195,7 @@ check-vars:
 check-api-key:
 	@test -n "$${OPEN_SANDBOX_API_KEY}" || (echo "OPEN_SANDBOX_API_KEY is required"; exit 1)
 
-_infra-deploy: check-vars
+_infra-deploy:
 	az group create --name "$(RESOURCE_GROUP)" --location "$(LOCATION)"
 	az deployment group create \
 		--resource-group "$(RESOURCE_GROUP)" \
@@ -205,13 +205,13 @@ _infra-deploy: check-vars
 _aks-credentials:
 	az aks get-credentials --resource-group "$(RESOURCE_GROUP)" --name "$(AKS_NAME)" --overwrite-existing
 
-_acr-login: check-vars
+_acr-login: check-acr-vars
 	@az acr show --name "$(ACR_NAME)" --query loginServer -o tsv >/dev/null
 
-_image-build: check-vars
+_image-build: check-acr-vars
 	docker build -t "$(SERVER_IMAGE)" -f $(SERVER_DEPLOY_DIR)/Dockerfile .
 
-_image-push: check-vars
+_image-push: check-acr-vars
 	@set -euo pipefail; \
 		login_server=$$(az acr show --name "$(ACR_NAME)" --query loginServer -o tsv); \
 		test -n "$$login_server"; \
@@ -234,7 +234,7 @@ _controller-install:
 	kubectl wait --for=condition=ready pod -l control-plane=controller-manager -n opensandbox-system --timeout=180s
 	kubectl get runtimeclass kata-vm-isolation
 
-_k8s-deploy: check-vars check-api-key
+_k8s-deploy: check-acr-vars check-api-key
 	kubectl create namespace "$(OPEN_SANDBOX_NAMESPACE)" --dry-run=client -o yaml | kubectl apply -f -
 	kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" create serviceaccount opensandbox-server --dry-run=client -o yaml | kubectl apply -f -
 	kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" create secret generic opensandbox-server \
@@ -305,6 +305,27 @@ status:
 	kubectl get pods -n opensandbox-system
 	kubectl get pods -n "$(OPEN_SANDBOX_NAMESPACE)" -o wide
 	kubectl get batchsandboxes -n "$(OPEN_SANDBOX_NAMESPACE)" || true
+
+gvisor-install:
+	kubectl apply -f deploy/gvisor-runtime/gvisor-installer.yaml
+	kubectl wait --for=condition=Complete job/gvisor-installer -n gvisor-install --timeout=300s
+	kubectl logs -n gvisor-install job/gvisor-installer
+	sleep 10
+	kubectl wait --for=condition=Ready node --all --timeout=300s
+	kubectl get runtimeclass gvisor
+
+gvisor-smoke-test:
+	kubectl apply -f deploy/gvisor-runtime/gvisor-smoke-pod.yaml
+	kubectl wait --for=condition=Ready pod/gvisor-smoke -n gvisor-install --timeout=240s
+	kubectl get pod gvisor-smoke -n gvisor-install -o jsonpath='{.metadata.name}{"\t"}{.spec.runtimeClassName}{"\t"}{.status.phase}{"\n"}'
+	kubectl exec -n gvisor-install gvisor-smoke -- uname -a
+	kubectl delete -f deploy/gvisor-runtime/gvisor-smoke-pod.yaml --wait=false
+
+gvisor-clean:
+	kubectl delete -f deploy/gvisor-runtime/gvisor-smoke-pod.yaml --ignore-not-found
+	kubectl delete job gvisor-installer -n gvisor-install --ignore-not-found
+	kubectl delete configmap gvisor-installer-script -n gvisor-install --ignore-not-found
+	kubectl delete namespace gvisor-install --ignore-not-found
 
 clean-k8s:
 	$(call reject_env_var,AKS_NAME,cleanup)

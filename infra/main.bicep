@@ -4,8 +4,8 @@ param location string = resourceGroup().location
 @description('AKS cluster name.')
 param aksName string
 
-@description('Globally unique Azure Container Registry name.')
-param acrName string
+@description('Globally unique Azure Container Registry name. Leave empty to skip ACR for Helm-only deployments that use public images.')
+param acrName string = ''
 
 @description('Azure Linux node VM size for AKS Pod Sandboxing. Standard_D4s_v3 is Gen2 and supports nested virtualization.')
 param nodeVmSize string = 'Standard_D4s_v3'
@@ -70,7 +70,9 @@ var aksVersionProperties = empty(kubernetesVersion) ? {} : {
   kubernetesVersion: kubernetesVersion
 }
 
-resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
+var hasAcr = !empty(acrName)
+
+resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = if (hasAcr) {
   name: acrName
   location: location
   tags: tags
@@ -98,7 +100,7 @@ resource acrPullRoleDefinition 'Microsoft.Authorization/roleDefinitions@2022-04-
   name: '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 }
 
-resource aksAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignAcrPullRole) {
+resource aksAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignAcrPullRole && hasAcr) {
   name: guid(aks.id, acr.id, acrPullRoleDefinition.id)
   scope: acr
   properties: {
@@ -109,9 +111,9 @@ resource aksAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (a
 }
 
 output aksName string = aks.name
-output acrLoginServer string = acr.properties.loginServer
+output acrLoginServer string = hasAcr ? acr!.properties.loginServer : ''
 output kataRuntimeClass string = 'kata-vm-isolation'
 output recommendedSku string = nodeVmSize
 output confidentialContainerSku string = 'Standard_DC8as_cc_v5'
-output acrAdminUserEnabled bool = acrAdminUserEnabled
+output acrAdminUserEnabled bool = hasAcr ? acrAdminUserEnabled : false
 output workloadRuntime string = workloadRuntime
