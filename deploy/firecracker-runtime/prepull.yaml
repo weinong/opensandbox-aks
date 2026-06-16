@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: firecracker-install
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: firecracker-prepull
+  namespace: firecracker-install
+spec:
+  selector:
+    matchLabels:
+      app: firecracker-prepull
+  template:
+    metadata:
+      labels:
+        app: firecracker-prepull
+    spec:
+      hostPID: true
+      nodeSelector:
+        kubernetes.azure.com/agentpool: fcpool
+      tolerations:
+        - key: firecracker
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      containers:
+        - name: prepull
+          image: python:3.12-slim
+          securityContext:
+            privileged: true
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              chroot /host /bin/sh -eu -c '
+                ctr -n k8s.io images pull --local --snapshotter devmapper --platform linux/amd64 mcr.microsoft.com/oss/v2/kubernetes/pause:3.6
+                ctr -n k8s.io images pull --local --snapshotter devmapper --platform linux/amd64 docker.io/library/python:3.12-slim
+              '
+              echo "pre-pulled Firecracker smoke images into devmapper"
+              sleep 3600
+          volumeMounts:
+            - name: host
+              mountPath: /host
+      volumes:
+        - name: host
+          hostPath:
+            path: /
+            type: Directory

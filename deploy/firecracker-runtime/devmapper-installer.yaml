@@ -1,0 +1,93 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: firecracker-install
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: devmapper-installer
+  namespace: firecracker-install
+spec:
+  selector:
+    matchLabels:
+      app: devmapper-installer
+  template:
+    metadata:
+      labels:
+        app: devmapper-installer
+    spec:
+      hostPID: true
+      nodeSelector:
+        kubernetes.azure.com/agentpool: fcpool
+      tolerations:
+        - key: firecracker
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      containers:
+        - name: installer
+          image: python:3.12-slim
+          securityContext:
+            privileged: true
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              chroot /host /bin/sh -eu -c '
+                install -d -m 0755 /var/lib/containerd-devmapper /var/lib/containerd/io.containerd.snapshotter.v1.devmapper
+                cd /var/lib/containerd-devmapper
+
+                if [ ! -f data ]; then truncate -s 20G data; fi
+                if [ ! -f metadata ]; then truncate -s 1G metadata; fi
+
+                data_dev=$(losetup --associated /var/lib/containerd-devmapper/data --output NAME --noheadings || true)
+                if [ -z "$data_dev" ]; then data_dev=$(losetup --find --show /var/lib/containerd-devmapper/data); fi
+                meta_dev=$(losetup --associated /var/lib/containerd-devmapper/metadata --output NAME --noheadings || true)
+                if [ -z "$meta_dev" ]; then meta_dev=$(losetup --find --show /var/lib/containerd-devmapper/metadata); fi
+
+                data_size=$(blockdev --getsize64 "$data_dev")
+                length=$((data_size / 512))
+                table="0 $length thin-pool $meta_dev $data_dev 128 32768 1 skip_block_zeroing"
+
+                if ! dmsetup info containerd-thinpool >/dev/null 2>&1; then
+                  dmsetup create containerd-thinpool --table "$table"
+                fi
+
+                cp /etc/containerd/config.toml "/etc/containerd/config.toml.opensandbox-devmapper.$(date +%Y%m%d%H%M%S).bak"
+                if ! grep -q "snapshotter.v1.devmapper" /etc/containerd/config.toml; then
+                  printf "\n%s\n  %s\n  %s\n  %s\n" \
+                    "[plugins.\"io.containerd.snapshotter.v1.devmapper\"]" \
+                    "pool_name = \"containerd-thinpool\"" \
+                    "root_path = \"/var/lib/containerd/io.containerd.snapshotter.v1.devmapper\"" \
+                    "base_image_size = \"10GB\"" \
+                    >> /etc/containerd/config.toml
+                fi
+
+                cp /etc/containerd/config.toml "/etc/containerd/config.toml.opensandbox-local-pull.$(date +%Y%m%d%H%M%S).bak"
+                if grep -q "use_local_image_pull = false" /etc/containerd/config.toml; then
+                  sed -i "s/use_local_image_pull = false/use_local_image_pull = true/" /etc/containerd/config.toml
+                elif ! grep -q "use_local_image_pull" /etc/containerd/config.toml; then
+                  printf "\n%s\n  %s\n" \
+                    "[plugins.\"io.containerd.cri.v1.images\"]" \
+                    "use_local_image_pull = true" \
+                    >> /etc/containerd/config.toml
+                fi
+
+                cp /etc/containerd/config.toml "/etc/containerd/config.toml.opensandbox-pause-digest.$(date +%Y%m%d%H%M%S).bak"
+                sed -i "s|sandbox_image = .*|sandbox_image = \"mcr.microsoft.com/oss/v2/kubernetes/pause@sha256:735578b75819512785301b018cc7f55b662076ea5dcc90553efd8d0328c05bd6\"|" /etc/containerd/config.toml
+
+                systemctl daemon-reload
+                nohup /bin/sh -c "sleep 2; systemctl restart containerd" >/var/log/opensandbox-firecracker-containerd-restart.log 2>&1 &
+              '
+              echo "configured devmapper and scheduled containerd restart"
+              sleep 3600
+          volumeMounts:
+            - name: host
+              mountPath: /host
+      volumes:
+        - name: host
+          hostPath:
+            path: /
+            type: Directory
