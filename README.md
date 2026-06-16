@@ -2,7 +2,7 @@
 
 This repository contains a reproducible example for running [OpenSandbox](https://github.com/opensandbox-group/OpenSandbox) on Azure Kubernetes Service with AKS Pod Sandboxing backed by Kata Containers.
 
-The example provisions AKS and Azure Container Registry with Bicep, installs the OpenSandbox Kubernetes controller, deploys an OpenSandbox lifecycle server configured for the `kata-vm-isolation` RuntimeClass, and runs a Python SDK smoke test that creates a sandbox and executes commands inside it.
+The example provisions AKS and Azure Container Registry with Bicep, installs the OpenSandbox Kubernetes controller, deploys an OpenSandbox lifecycle server configured for the `kata-optimized` RuntimeClass, and runs a Python SDK smoke test that creates a sandbox and executes commands inside it.
 
 ## Layout
 
@@ -19,7 +19,7 @@ The example provisions AKS and Azure Container Registry with Bicep, installs the
 
 ## SKU Choice
 
-AKS Pod Sandboxing requires Azure Linux nodes and a VM size that is generation 2 and supports nested virtualization. This example defaults to `Standard_D4s_v3`, matching Microsoft AKS Pod Sandboxing guidance. The Bicep template creates a non-Kata Azure Linux system pool for cluster components and a dedicated tainted Kata user pool using `KataMshvVmIsolation`, which exposes pods through the `kata-vm-isolation` Kubernetes RuntimeClass.
+AKS Pod Sandboxing requires Azure Linux nodes and a VM size that is generation 2 and supports nested virtualization. This example defaults to `Standard_D4s_v3`, matching Microsoft AKS Pod Sandboxing guidance. The Bicep template creates a non-Kata Azure Linux system pool for cluster components and a dedicated tainted Kata user pool using `KataMshvVmIsolation`, which exposes pods through the AKS `kata-vm-isolation` Kubernetes RuntimeClass. The deployment adds `kata-optimized`, an equivalent RuntimeClass with `32Mi` pod memory overhead.
 
 The current topology is intended for new disposable environments. Existing clusters created by older versions of this repo used `katapool` as the initial system pool; recreate those clusters before applying this layout so AKS does not have to rename or convert the original system pool.
 
@@ -155,7 +155,7 @@ The smoke test prints sandbox command output and the kernel/runtime details obse
 kubectl get pods -n opensandbox -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.runtimeClassName}{"\n"}{end}'
 ```
 
-OpenSandbox-created workload pods should show `kata-vm-isolation`.
+OpenSandbox-created workload pods should show `kata-optimized`.
 
 ### Why the sandbox kernel can look like the node kernel
 
@@ -164,8 +164,10 @@ OpenSandbox-created workload pods should show `kata-vm-isolation`.
 Treat `runtimeClassName`, not the `uname` release alone, as the primary proof that the OpenSandbox workload is using Kata. In this example the Kata path is configured in three places:
 
 - The AKS Kata user pool is created with `workloadRuntime: 'KataMshvVmIsolation'` in `infra/main.bicep`; the system pool remains non-Kata Azure Linux.
-- OpenSandbox is configured with `k8s_runtime_class = "kata-vm-isolation"` in `deploy/opensandbox-server/config/sandbox.toml`.
-- The BatchSandbox template sets `runtimeClassName: kata-vm-isolation` and targets `kubernetes.azure.com/agentpool=$KATA_NODEPOOL_NAME` in `deploy/opensandbox-server/k8s/batchsandbox-template.yaml`.
+- OpenSandbox is configured with `k8s_runtime_class = "kata-optimized"` in `deploy/opensandbox-server/config/sandbox.toml`.
+- The BatchSandbox template sets `runtimeClassName: kata-optimized` and targets `kubernetes.azure.com/agentpool=$KATA_NODEPOOL_NAME` in `deploy/opensandbox-server/k8s/batchsandbox-template.yaml`.
+
+`kata-optimized` is created by `make controller-install` and `make k8s-deploy` from `deploy/opensandbox-server/k8s/kata-optimized-runtimeclass.yaml`. If you run the proof pod before the OpenSandbox deployment steps, apply that manifest first.
 
 For a live comparison, create one regular pod and one Kata pod on the cluster, then compare their runtime classes and kernel strings:
 
@@ -178,7 +180,7 @@ kind: Pod
 metadata:
   name: proof-kata
 spec:
-  runtimeClassName: kata-vm-isolation
+  runtimeClassName: kata-optimized
   nodeSelector:
     kubernetes.azure.com/agentpool: katauser
   tolerations:
@@ -212,11 +214,11 @@ kubectl exec -n opensandbox proof-kata -- uname -a
 kubectl delete pod proof-normal proof-kata -n opensandbox --ignore-not-found
 ```
 
-Example output from this cluster should show the regular pod on the non-Kata system pool and the Kata pod on the dedicated Kata user pool, while only the Kata pod has `runtimeClassName: kata-vm-isolation`:
+Example output from this cluster should show the regular pod on the non-Kata system pool and the Kata pod on the dedicated Kata user pool, while only the Kata pod has `runtimeClassName: kata-optimized`:
 
 ```text
 proof-normal        <empty>               <system-node-name>
-proof-kata          kata-vm-isolation     <kata-node-name>
+proof-kata          kata-optimized        <kata-node-name>
 
 Linux proof-normal 6.6.137.mshv1-1.azl3 #1 SMP Tue May 19 17:27:14 UTC 2026 x86_64 GNU/Linux
 Linux proof-kata   6.6.137.mshv1-1.azl3 #1 SMP Tue May 19 17:02:13 UTC 2026 x86_64 GNU/Linux

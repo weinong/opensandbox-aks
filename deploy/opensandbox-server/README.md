@@ -1,6 +1,6 @@
 # OpenSandbox Server Deployment
 
-This deployment packages the upstream OpenSandbox lifecycle server for AKS and configures it to create sandboxes with the AKS `kata-vm-isolation` RuntimeClass.
+This deployment packages the upstream OpenSandbox lifecycle server for AKS and configures it to create sandboxes with the `kata-optimized` RuntimeClass.
 
 ## What It Runs
 
@@ -25,10 +25,10 @@ batchsandbox_template_file = "/app/batchsandbox-template.yaml"
 
 [secure_runtime]
 type = "kata"
-k8s_runtime_class = "kata-vm-isolation"
+k8s_runtime_class = "kata-optimized"
 ```
 
-The Bicep template keeps cluster components on a non-Kata Azure Linux system pool and creates a dedicated tainted Kata user pool with `workloadRuntime: 'KataMshvVmIsolation'`, which creates the matching `kata-vm-isolation` RuntimeClass. `k8s/batchsandbox-template.yaml` sets the runtime class and targets the Kata pool with a node selector and toleration.
+The Bicep template keeps cluster components on a non-Kata Azure Linux system pool and creates a dedicated tainted Kata user pool with `workloadRuntime: 'KataMshvVmIsolation'`, which creates the AKS `kata-vm-isolation` RuntimeClass. `make controller-install` also creates `kata-optimized`, which is identical to `kata-vm-isolation` except for a reduced `32Mi` pod memory overhead. `k8s/batchsandbox-template.yaml` sets the optimized runtime class and targets the Kata pool with a node selector and toleration.
 
 ## Pause/Resume Snapshot Configuration
 

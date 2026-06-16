@@ -19,7 +19,7 @@ sandbox_create_timeout_seconds = 120
 
 [secure_runtime]
 type = "kata"
-k8s_runtime_class = "kata-vm-isolation"
+k8s_runtime_class = "kata-optimized"
 
 [ingress]
 mode = "direct"
