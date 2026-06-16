@@ -53,10 +53,10 @@ uname_output=$("${osb_base[@]}" command run "$sandbox_id" -o raw -- uname -a)
 printf 'sandbox kernel: %s\n' "$uname_output"
 
 "${osb_base[@]}" file write "$sandbox_id" /tmp/opensandbox-osb-cli.txt \
-  -c 'osb cli smoke test' \
+  -c 'osb cli example' \
   -o json >/dev/null
 file_content=$("${osb_base[@]}" file cat "$sandbox_id" /tmp/opensandbox-osb-cli.txt -o raw)
-if [ "$file_content" != "osb cli smoke test" ]; then
+if [ "$file_content" != "osb cli example" ]; then
   printf 'unexpected file content: %s\n' "$file_content" >&2
   exit 1
 fi
