@@ -42,7 +42,7 @@ make local-config
 make print-config
 ```
 
-The generated `.make.env` file is ignored by git and contains resource names, the current Azure subscription ID, and a local `OPEN_SANDBOX_API_KEY`. Edit it if you want specific names, region, node count, or fallback settings. Deploy and smoke-test targets create/backfill this file automatically when needed without overwriting existing values. If you use a custom `LOCAL_CONFIG` path, add it to `.gitignore` or `.git/info/exclude` before generating secrets.
+The generated `.make.env` file is ignored by git and contains environment-specific values: resource names, region, node count, namespace, the current Azure subscription ID, and a local `OPEN_SANDBOX_API_KEY`. Stable workflow defaults such as image tag, controller version, CLI version, snapshot defaults, and example image live in the `Makefile` and can still be overridden on the make command line when needed. Deploy and smoke-test targets create/backfill this file automatically without overwriting existing environment values. During migration, known generated stable defaults are pruned from existing `.make.env` files so future Makefile defaults apply. If you use a custom `LOCAL_CONFIG` path, add it to `.gitignore` or `.git/info/exclude` before generating secrets.
 
 By default this sample uses managed identity `AcrPull` for the server image path and does not create registry credentials. OpenSandbox pause/resume needs push and pull credentials for root filesystem snapshot images; for disposable examples, opt in with `ENABLE_SNAPSHOT_REGISTRY_SECRET=true ACR_ADMIN_USER_ENABLED=true`, or create your own `kubernetes.io/dockerconfigjson` secret named by `OPEN_SANDBOX_SNAPSHOT_SECRET` before pausing sandboxes.
 
