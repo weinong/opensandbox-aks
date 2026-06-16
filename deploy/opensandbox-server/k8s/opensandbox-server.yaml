@@ -110,6 +110,9 @@ spec:
         - name: config
           configMap:
             name: opensandbox-server-config
+        - name: batchsandbox-template
+          configMap:
+            name: opensandbox-batchsandbox-template
         - name: tmp
           emptyDir: {}
       containers:
@@ -131,6 +134,10 @@ spec:
             - name: config
               mountPath: /app/sandbox.toml
               subPath: sandbox.toml
+              readOnly: true
+            - name: batchsandbox-template
+              mountPath: /app/batchsandbox-template.yaml
+              subPath: batchsandbox-template.yaml
               readOnly: true
             - name: tmp
               mountPath: /tmp

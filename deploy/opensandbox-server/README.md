@@ -28,7 +28,7 @@ type = "kata"
 k8s_runtime_class = "kata-vm-isolation"
 ```
 
-The AKS node pool is created with Bicep using `workloadRuntime: 'KataMshvVmIsolation'`, which creates the matching `kata-vm-isolation` RuntimeClass.
+The Bicep template keeps cluster components on a non-Kata Azure Linux system pool and creates a dedicated tainted Kata user pool with `workloadRuntime: 'KataMshvVmIsolation'`, which creates the matching `kata-vm-isolation` RuntimeClass. `k8s/batchsandbox-template.yaml` sets the runtime class and targets the Kata pool with a node selector and toleration.
 
 ## Pause/Resume Snapshot Configuration
 

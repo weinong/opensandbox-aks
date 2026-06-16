@@ -19,7 +19,7 @@ spec:
     spec:
       hostPID: true
       nodeSelector:
-        kubernetes.azure.com/agentpool: fcpool
+        kubernetes.azure.com/agentpool: __FIRECRACKER_NODEPOOL_NAME__
       tolerations:
         - key: firecracker
           operator: Equal

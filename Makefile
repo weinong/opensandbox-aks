@@ -32,9 +32,12 @@ LOCATION ?= eastus
 AKS_NAME ?= osb-kata-aks
 ACR_NAME ?=
 NODE_VM_SIZE ?= Standard_D4s_v3
-NODE_COUNT ?= 3
+SYSTEM_NODE_COUNT ?= 1
+KATA_NODEPOOL_NAME ?= katauser
+KATA_NODE_COUNT ?= 3
+GVISOR_NODEPOOL_NAME ?= gvisorpool
+GVISOR_NODE_COUNT ?= 1
 FIRECRACKER_NODEPOOL_NAME ?= fcpool
-FIRECRACKER_NODE_VM_SIZE ?= Standard_D2s_v3
 FIRECRACKER_NODE_COUNT ?= 1
 
 # Stable workflow defaults stay in this Makefile unless explicitly overridden.
@@ -67,7 +70,7 @@ CONFIGURED_TARGETS := all print-config infra-deploy aks-credentials acr-login im
 INTERNAL_TARGETS := $(addprefix _,$(CONFIGURED_TARGETS))
 MAKEFILE_PATH := $(abspath $(firstword $(MAKEFILE_LIST)))
 
-.PHONY: $(CONFIGURED_TARGETS) $(INTERNAL_TARGETS) local-config check-tools check-smoke-tools check-acr-vars check-api-key status clean-k8s clean-opensandbox-crds infra-delete gvisor-install gvisor-smoke-test gvisor-clean firecracker-nodepool-add firecracker-install firecracker-smoke-test firecracker-clean
+.PHONY: $(CONFIGURED_TARGETS) $(INTERNAL_TARGETS) help local-config check-tools check-smoke-tools check-acr-vars check-api-key status clean-k8s clean-opensandbox-crds infra-delete gvisor-nodepool-add gvisor-install gvisor-smoke-test gvisor-clean firecracker-nodepool-add firecracker-install firecracker-smoke-test firecracker-clean
 
 define configured_target
 $1: local-config
@@ -89,6 +92,49 @@ endef
 $(foreach target,$(CONFIGURED_TARGETS),$(eval $(call configured_target,$(target))))
 
 _all: check-tools check-api-key _infra-deploy _aks-credentials _acr-login _image-build _image-push _controller-install _k8s-deploy _smoke-test
+
+help:
+	@printf '%s\n' \
+		'OpenSandbox AKS Make targets' \
+		'' \
+		'Core workflow:' \
+		'  make all                  Deploy infra, install app, and run smoke test' \
+		'  make local-config         Create/update ignored local config file' \
+		'  make print-config         Show effective configuration' \
+		'  make infra-deploy         Deploy AKS, ACR, system pool, and Kata user pool' \
+		'  make aks-credentials      Fetch kubectl credentials' \
+		'  make image-build          Build opensandbox-server image' \
+		'  make image-push           Push opensandbox-server image' \
+		'  make controller-install   Install OpenSandbox controller' \
+		'  make k8s-deploy           Deploy opensandbox-server Kubernetes resources' \
+		'  make smoke-test           Run Python SDK smoke test' \
+		'  make cli-smoke-test       Run osb CLI smoke test' \
+		'' \
+		'Runtime experiments:' \
+		'  make gvisor-nodepool-add      Add dedicated gVisor pool through Bicep' \
+		'  make gvisor-install           Install gVisor on the dedicated pool' \
+		'  make gvisor-smoke-test        Run gVisor smoke pod' \
+		'  make gvisor-clean             Remove gVisor Kubernetes resources' \
+		'  make firecracker-nodepool-add Add dedicated Firecracker pool through Bicep' \
+		'  make firecracker-install      Install Kata Firecracker runtime support' \
+		'  make firecracker-smoke-test   Run Firecracker smoke pod' \
+		'  make firecracker-clean        Remove Firecracker Kubernetes resources' \
+		'' \
+		'Examples:' \
+		'  make pause-renew-example      Run Python pause/resume example' \
+		'  make pause-renew-cli-example  Run CLI pause/resume example' \
+		'' \
+		'Cleanup:' \
+		'  make clean-k8s                Delete app/controller resources; requires CONFIRM_*' \
+		'  make clean-opensandbox-crds   Delete OpenSandbox CRDs; requires CONFIRM_*' \
+		'  make infra-delete             Delete resource group; no CONFIRM_* required' \
+		'' \
+		'Common overrides:' \
+		'  LOCAL_CONFIG=.make.env RESOURCE_GROUP=<name> AKS_NAME=<name> ACR_NAME=<name>' \
+		'  NODE_VM_SIZE=Standard_D4s_v3 SYSTEM_NODE_COUNT=1 KATA_NODE_COUNT=3' \
+		'' \
+		'Current config:'
+	@$(MAKE) --no-print-directory -f "$(MAKEFILE_PATH)" LOCAL_CONFIG="$(LOCAL_CONFIG)" _print-config
 
 local-config:
 	@set -euo pipefail; \
@@ -160,6 +206,18 @@ local-config:
 		remove_generated_default '^(export[[:space:]]+)?SERVER_IMAGE_TAG[[:space:]]*\?=[[:space:]]*latest$$'; \
 		remove_generated_default '^(export[[:space:]]+)?SANDBOX_IMAGE[[:space:]]*\?=[[:space:]]*python:3\.12-slim$$'; \
 		remove_generated_default '^(export[[:space:]]+)?SERVER_PORT[[:space:]]*\?=[[:space:]]*8080$$'; \
+		remove_generated_default '^(export[[:space:]]+)?NODE_VM_SIZE[[:space:]]*\?=[[:space:]]*Standard_D4s_v3$$'; \
+		remove_generated_default '^(export[[:space:]]+)?SYSTEM_NODE_COUNT[[:space:]]*\?=[[:space:]]*1$$'; \
+		remove_generated_default '^(export[[:space:]]+)?KATA_NODEPOOL_NAME[[:space:]]*\?=[[:space:]]*katapool$$'; \
+		remove_generated_default '^(export[[:space:]]+)?KATA_NODEPOOL_NAME[[:space:]]*\?=[[:space:]]*katauser$$'; \
+		remove_generated_default '^(export[[:space:]]+)?NODE_COUNT[[:space:]]*\?=[[:space:]]*3$$'; \
+		remove_generated_default '^(export[[:space:]]+)?KATA_NODE_COUNT[[:space:]]*\?=[[:space:]]*3$$'; \
+		remove_generated_default '^(export[[:space:]]+)?GVISOR_NODEPOOL_NAME[[:space:]]*\?=[[:space:]]*gvisorpool$$'; \
+		remove_generated_default '^(export[[:space:]]+)?GVISOR_NODE_COUNT[[:space:]]*\?=[[:space:]]*1$$'; \
+		remove_generated_default '^(export[[:space:]]+)?GVISOR_NODE_VM_SIZE[[:space:]]*\?=[[:space:]]*Standard_D2s_v3$$'; \
+		remove_generated_default '^(export[[:space:]]+)?FIRECRACKER_NODEPOOL_NAME[[:space:]]*\?=[[:space:]]*fcpool$$'; \
+		remove_generated_default '^(export[[:space:]]+)?FIRECRACKER_NODE_COUNT[[:space:]]*\?=[[:space:]]*1$$'; \
+		remove_generated_default '^(export[[:space:]]+)?FIRECRACKER_NODE_VM_SIZE[[:space:]]*\?=[[:space:]]*Standard_D2s_v3$$'; \
 		location=$$(value_for '$(origin LOCATION)' '$(LOCATION)' 'eastus'); \
 		resource_group=$$(value_for '$(origin RESOURCE_GROUP)' '$(RESOURCE_GROUP)' "rg-opensandbox-kata-$$suffix"); \
 		subscription_id=$$(value_for '$(origin SUBSCRIPTION_ID)' '$(SUBSCRIPTION_ID)' "$$current_subscription"); \
@@ -171,11 +229,6 @@ local-config:
 		if [ -n "$$subscription_id" ]; then add_if_missing SUBSCRIPTION_ID "SUBSCRIPTION_ID ?= $$subscription_id"; fi; \
 		add_if_missing AKS_NAME "AKS_NAME ?= $$aks_name"; \
 		add_if_missing ACR_NAME "ACR_NAME ?= $$acr_name"; \
-		add_if_missing NODE_VM_SIZE 'NODE_VM_SIZE ?= Standard_D4s_v3'; \
-		add_if_missing NODE_COUNT 'NODE_COUNT ?= 3'; \
-		add_if_missing FIRECRACKER_NODEPOOL_NAME 'FIRECRACKER_NODEPOOL_NAME ?= fcpool'; \
-		add_if_missing FIRECRACKER_NODE_VM_SIZE 'FIRECRACKER_NODE_VM_SIZE ?= Standard_D2s_v3'; \
-		add_if_missing FIRECRACKER_NODE_COUNT 'FIRECRACKER_NODE_COUNT ?= 1'; \
 		add_if_missing OPEN_SANDBOX_NAMESPACE 'OPEN_SANDBOX_NAMESPACE ?= opensandbox'; \
 		add_if_missing OPEN_SANDBOX_API_KEY "OPEN_SANDBOX_API_KEY ?= $$api_key"; \
 		if ! grep -Eq '^export[[:space:]]+OPEN_SANDBOX_API_KEY([[:space:]]|$$)' "$$file"; then \
@@ -196,9 +249,12 @@ _print-config:
 	@echo "AKS_NAME=$(AKS_NAME)"
 	@echo "ACR_NAME=$(ACR_NAME)"
 	@echo "NODE_VM_SIZE=$(NODE_VM_SIZE)"
-	@echo "NODE_COUNT=$(NODE_COUNT)"
+	@echo "SYSTEM_NODE_COUNT=$(SYSTEM_NODE_COUNT)"
+	@echo "KATA_NODEPOOL_NAME=$(KATA_NODEPOOL_NAME)"
+	@echo "KATA_NODE_COUNT=$(KATA_NODE_COUNT)"
+	@echo "GVISOR_NODEPOOL_NAME=$(GVISOR_NODEPOOL_NAME)"
+	@echo "GVISOR_NODE_COUNT=$(GVISOR_NODE_COUNT)"
 	@echo "FIRECRACKER_NODEPOOL_NAME=$(FIRECRACKER_NODEPOOL_NAME)"
-	@echo "FIRECRACKER_NODE_VM_SIZE=$(FIRECRACKER_NODE_VM_SIZE)"
 	@echo "FIRECRACKER_NODE_COUNT=$(FIRECRACKER_NODE_COUNT)"
 	@echo "ASSIGN_ACR_PULL_ROLE=$(ASSIGN_ACR_PULL_ROLE)"
 	@echo "ACR_ADMIN_USER_ENABLED=$(ACR_ADMIN_USER_ENABLED)"
@@ -241,7 +297,7 @@ _infra-deploy:
 	az deployment group create \
 		--resource-group "$(RESOURCE_GROUP)" \
 		--template-file infra/main.bicep \
-		--parameters aksName="$(AKS_NAME)" acrName="$(ACR_NAME)" location="$(LOCATION)" nodeVmSize="$(NODE_VM_SIZE)" nodeCount=$(NODE_COUNT) assignAcrPullRole=$(ASSIGN_ACR_PULL_ROLE) acrAdminUserEnabled=$(ACR_ADMIN_USER_ENABLED)
+		--parameters aksName="$(AKS_NAME)" acrName="$(ACR_NAME)" location="$(LOCATION)" nodeVmSize="$(NODE_VM_SIZE)" systemNodeCount=$(SYSTEM_NODE_COUNT) kataNodePoolName="$(KATA_NODEPOOL_NAME)" kataNodeCount=$(KATA_NODE_COUNT) assignAcrPullRole=$(ASSIGN_ACR_PULL_ROLE) acrAdminUserEnabled=$(ACR_ADMIN_USER_ENABLED)
 
 _aks-credentials:
 	az aks get-credentials --resource-group "$(RESOURCE_GROUP)" --name "$(AKS_NAME)" --overwrite-existing
@@ -313,6 +369,11 @@ _k8s-deploy: check-acr-vars check-api-key
 			--type merge \
 			--patch '{"imagePullSecrets":[{"name":"acr-pull"}]}'; \
 	fi
+	sed \
+		-e 's|__KATA_NODEPOOL_NAME__|$(KATA_NODEPOOL_NAME)|g' \
+		$(SERVER_DEPLOY_DIR)/k8s/batchsandbox-template.yaml | kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" create configmap opensandbox-batchsandbox-template \
+		--from-file=batchsandbox-template.yaml=/dev/stdin \
+		--dry-run=client -o yaml | kubectl apply -f -
 	sed \
 		-e 's|__NAMESPACE__|$(OPEN_SANDBOX_NAMESPACE)|g' \
 		$(SERVER_DEPLOY_DIR)/config/sandbox.toml | kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" create configmap opensandbox-server-config \
@@ -416,58 +477,62 @@ status:
 	kubectl get batchsandboxes -n "$(OPEN_SANDBOX_NAMESPACE)" || true
 	kubectl get sandboxsnapshots -n "$(OPEN_SANDBOX_NAMESPACE)" || true
 
+gvisor-nodepool-add:
+	az deployment group create \
+		--resource-group "$(RESOURCE_GROUP)" \
+		--template-file infra/main.bicep \
+		--parameters aksName="$(AKS_NAME)" acrName="$(ACR_NAME)" location="$(LOCATION)" nodeVmSize="$(NODE_VM_SIZE)" systemNodeCount=$(SYSTEM_NODE_COUNT) kataNodePoolName="$(KATA_NODEPOOL_NAME)" kataNodeCount=$(KATA_NODE_COUNT) assignAcrPullRole=$(ASSIGN_ACR_PULL_ROLE) acrAdminUserEnabled=$(ACR_ADMIN_USER_ENABLED) enableGvisorNodePool=true gvisorNodePoolName="$(GVISOR_NODEPOOL_NAME)" gvisorNodeCount=$(GVISOR_NODE_COUNT)
+	kubectl wait --for=condition=Ready node -l kubernetes.azure.com/agentpool=$(GVISOR_NODEPOOL_NAME) --timeout=600s
+
 gvisor-install:
-	kubectl apply -f deploy/gvisor-runtime/gvisor-installer.yaml
-	kubectl wait --for=condition=Complete job/gvisor-installer -n gvisor-install --timeout=300s
-	kubectl logs -n gvisor-install job/gvisor-installer
+	sed -e 's|__GVISOR_NODEPOOL_NAME__|$(GVISOR_NODEPOOL_NAME)|g' deploy/gvisor-runtime/gvisor-installer.yaml | kubectl apply -f -
+	kubectl rollout status daemonset/gvisor-installer -n gvisor-install --timeout=300s
+	kubectl logs -n gvisor-install daemonset/gvisor-installer --tail=-1
 	sleep 10
-	kubectl wait --for=condition=Ready node --all --timeout=300s
+	kubectl wait --for=condition=Ready node -l kubernetes.azure.com/agentpool=$(GVISOR_NODEPOOL_NAME) --timeout=300s
 	kubectl get runtimeclass gvisor
 
 gvisor-smoke-test:
-	kubectl apply -f deploy/gvisor-runtime/gvisor-smoke-pod.yaml
+	sed -e 's|__GVISOR_NODEPOOL_NAME__|$(GVISOR_NODEPOOL_NAME)|g' deploy/gvisor-runtime/gvisor-smoke-pod.yaml | kubectl apply -f -
 	kubectl wait --for=condition=Ready pod/gvisor-smoke -n gvisor-install --timeout=240s
-	kubectl get pod gvisor-smoke -n gvisor-install -o jsonpath='{.metadata.name}{"\t"}{.spec.runtimeClassName}{"\t"}{.status.phase}{"\n"}'
+	kubectl get pod gvisor-smoke -n gvisor-install -o jsonpath='{.metadata.name}{"\t"}{.spec.runtimeClassName}{"\t"}{.spec.nodeName}{"\t"}{.status.phase}{"\n"}'
 	kubectl exec -n gvisor-install gvisor-smoke -- uname -a
-	kubectl delete -f deploy/gvisor-runtime/gvisor-smoke-pod.yaml --wait=false
+	sed -e 's|__GVISOR_NODEPOOL_NAME__|$(GVISOR_NODEPOOL_NAME)|g' deploy/gvisor-runtime/gvisor-smoke-pod.yaml | kubectl delete -f - --wait=false
 
 gvisor-clean:
-	kubectl delete -f deploy/gvisor-runtime/gvisor-smoke-pod.yaml --ignore-not-found
-	kubectl delete job gvisor-installer -n gvisor-install --ignore-not-found
+	sed -e 's|__GVISOR_NODEPOOL_NAME__|$(GVISOR_NODEPOOL_NAME)|g' deploy/gvisor-runtime/gvisor-smoke-pod.yaml | kubectl delete -f - --ignore-not-found
+	kubectl delete daemonset gvisor-installer -n gvisor-install --ignore-not-found
 	kubectl delete configmap gvisor-installer-script -n gvisor-install --ignore-not-found
 	kubectl delete namespace gvisor-install --ignore-not-found
 
 firecracker-nodepool-add:
-	az aks nodepool add \
+	az deployment group create \
 		--resource-group "$(RESOURCE_GROUP)" \
-		--cluster-name "$(AKS_NAME)" \
-		--name "$(FIRECRACKER_NODEPOOL_NAME)" \
-		--mode User \
-		--node-count $(FIRECRACKER_NODE_COUNT) \
-		--node-vm-size "$(FIRECRACKER_NODE_VM_SIZE)" \
-		--os-sku AzureLinux \
-		--node-taints firecracker=true:NoSchedule \
-		--labels runtime-experiment=firecracker
+		--template-file infra/main.bicep \
+		--parameters aksName="$(AKS_NAME)" acrName="$(ACR_NAME)" location="$(LOCATION)" nodeVmSize="$(NODE_VM_SIZE)" systemNodeCount=$(SYSTEM_NODE_COUNT) kataNodePoolName="$(KATA_NODEPOOL_NAME)" kataNodeCount=$(KATA_NODE_COUNT) assignAcrPullRole=$(ASSIGN_ACR_PULL_ROLE) acrAdminUserEnabled=$(ACR_ADMIN_USER_ENABLED) enableFirecrackerNodePool=true firecrackerNodePoolName="$(FIRECRACKER_NODEPOOL_NAME)" firecrackerNodeCount=$(FIRECRACKER_NODE_COUNT)
 	kubectl wait --for=condition=Ready node -l kubernetes.azure.com/agentpool=$(FIRECRACKER_NODEPOOL_NAME) --timeout=600s
 
 firecracker-install:
-	"$${HELM:-helm}" upgrade --install kata-fc "$(KATA_DEPLOY_CHART)" \
-		-n kube-system \
-		-f deploy/firecracker-runtime/kata-fc-values.yaml \
-		--wait \
-		--timeout 20m
-	kubectl apply -f deploy/firecracker-runtime/devmapper-installer.yaml
+	tmp_values=$$(mktemp); \
+		sed -e 's|__FIRECRACKER_NODEPOOL_NAME__|$(FIRECRACKER_NODEPOOL_NAME)|g' deploy/firecracker-runtime/kata-fc-values.yaml > "$$tmp_values"; \
+		trap 'rm -f "$$tmp_values"' EXIT; \
+		"$${HELM:-helm}" upgrade --install kata-fc "$(KATA_DEPLOY_CHART)" \
+			-n kube-system \
+			-f "$$tmp_values" \
+			--wait \
+			--timeout 20m
+	sed -e 's|__FIRECRACKER_NODEPOOL_NAME__|$(FIRECRACKER_NODEPOOL_NAME)|g' deploy/firecracker-runtime/devmapper-installer.yaml | kubectl apply -f -
 	kubectl rollout status daemonset/devmapper-installer -n firecracker-install --timeout=240s
 	sleep 20
 	kubectl wait --for=condition=Ready node -l kubernetes.azure.com/agentpool=$(FIRECRACKER_NODEPOOL_NAME) --timeout=300s
-	kubectl apply -f deploy/firecracker-runtime/prepull.yaml
+	sed -e 's|__FIRECRACKER_NODEPOOL_NAME__|$(FIRECRACKER_NODEPOOL_NAME)|g' deploy/firecracker-runtime/prepull.yaml | kubectl apply -f -
 	kubectl rollout status daemonset/firecracker-prepull -n firecracker-install --timeout=240s
 	sleep 20
 	kubectl get runtimeclass kata-fc
 
 firecracker-smoke-test:
 	kubectl delete pod -n firecracker-smoke kata-fc-smoke --ignore-not-found
-	kubectl apply -f deploy/firecracker-runtime/kata-fc-smoke-pod.yaml
+	sed -e 's|__FIRECRACKER_NODEPOOL_NAME__|$(FIRECRACKER_NODEPOOL_NAME)|g' deploy/firecracker-runtime/kata-fc-smoke-pod.yaml | kubectl apply -f -
 	kubectl wait --for=condition=Ready pod/kata-fc-smoke -n firecracker-smoke --timeout=360s
 	kubectl get pod kata-fc-smoke -n firecracker-smoke -o jsonpath='{.metadata.name}{"\t"}{.spec.runtimeClassName}{"\t"}{.spec.nodeName}{"\t"}{.status.phase}{"\n"}'
 	kubectl exec -n firecracker-smoke kata-fc-smoke -- uname -a
@@ -528,8 +593,6 @@ infra-delete:
 	$(call reject_env_var,SUBSCRIPTION_ID,deletion)
 	$(call require_cli_or_config,RESOURCE_GROUP)
 	$(call require_cli_or_config,SUBSCRIPTION_ID)
-	$(call confirm_var,RESOURCE_GROUP,delete infrastructure)
-	$(call confirm_var,SUBSCRIPTION_ID,delete infrastructure)
 	@current_subscription=$$(az account show --query id -o tsv); \
 		if [ "$$current_subscription" != "$(SUBSCRIPTION_ID)" ]; then echo "Current Azure subscription '$$current_subscription' does not match $(SUBSCRIPTION_ID)"; exit 1; fi
-	az group delete --name "$(RESOURCE_GROUP)" --subscription "$(SUBSCRIPTION_ID)" --yes --no-wait
+	az group delete --name "$(RESOURCE_GROUP)" --subscription "$(SUBSCRIPTION_ID)" --yes
