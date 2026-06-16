@@ -15,7 +15,7 @@ node pools.
 - The node pool must be tainted with `firecracker=true:NoSchedule`.
 - `kube-proxy` must be healthy on the Firecracker node pool before installing.
 
-Create the node pool with:
+Create the node pool through Bicep with:
 
 ```bash
 make firecracker-nodepool-add

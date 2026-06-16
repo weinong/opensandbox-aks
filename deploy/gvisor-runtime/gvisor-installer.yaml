@@ -62,26 +62,37 @@ data:
     chroot /host /bin/sh -c 'nohup /bin/sh -c "sleep 2; systemctl restart containerd" >/var/log/opensandbox-gvisor-containerd-restart.log 2>&1 &'
     echo "scheduled containerd restart"
 ---
-apiVersion: batch/v1
-kind: Job
+apiVersion: apps/v1
+kind: DaemonSet
 metadata:
   name: gvisor-installer
   namespace: gvisor-install
 spec:
-  backoffLimit: 0
+  selector:
+    matchLabels:
+      app: gvisor-installer
   template:
     metadata:
       labels:
         app: gvisor-installer
     spec:
-      restartPolicy: Never
       hostPID: true
+      nodeSelector:
+        kubernetes.azure.com/agentpool: __GVISOR_NODEPOOL_NAME__
       tolerations:
-        - operator: Exists
+        - key: gvisor
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
       containers:
         - name: installer
           image: mcr.microsoft.com/cbl-mariner/base/core:2.0
-          command: ["/bin/sh", "/scripts/install.sh"]
+          command:
+            - /bin/sh
+            - -c
+            - |
+              /scripts/install.sh
+              sleep 2147483647
           securityContext:
             privileged: true
           volumeMounts:

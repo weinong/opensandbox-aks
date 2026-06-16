@@ -10,6 +10,8 @@ metadata:
   namespace: firecracker-smoke
 spec:
   runtimeClassName: kata-fc
+  nodeSelector:
+    kubernetes.azure.com/agentpool: __FIRECRACKER_NODEPOOL_NAME__
   tolerations:
     - key: firecracker
       operator: Equal

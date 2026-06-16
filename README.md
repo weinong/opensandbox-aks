@@ -19,7 +19,9 @@ The example provisions AKS and Azure Container Registry with Bicep, installs the
 
 ## SKU Choice
 
-AKS Pod Sandboxing requires Azure Linux nodes and a VM size that is generation 2 and supports nested virtualization. This example defaults to `Standard_D4s_v3`, matching Microsoft AKS Pod Sandboxing guidance. The current AKS Bicep API uses `KataMshvVmIsolation` for the managed node pool workload runtime and exposes pods through the `kata-vm-isolation` Kubernetes RuntimeClass.
+AKS Pod Sandboxing requires Azure Linux nodes and a VM size that is generation 2 and supports nested virtualization. This example defaults to `Standard_D4s_v3`, matching Microsoft AKS Pod Sandboxing guidance. The Bicep template creates a non-Kata Azure Linux system pool for cluster components and a dedicated tainted Kata user pool using `KataMshvVmIsolation`, which exposes pods through the `kata-vm-isolation` Kubernetes RuntimeClass.
+
+The current topology is intended for new disposable environments. Existing clusters created by older versions of this repo used `katapool` as the initial system pool; recreate those clusters before applying this layout so AKS does not have to rename or convert the original system pool.
 
 Use `Standard_DC8as_cc_v5` instead when you specifically need AKS Confidential Containers with `KataCcIsolation`; that is a different workload runtime and requires AMD SEV-SNP capable confidential computing quota.
 
@@ -42,7 +44,7 @@ make local-config
 make print-config
 ```
 
-The generated `.make.env` file is ignored by git and contains environment-specific values: resource names, region, node count, namespace, the current Azure subscription ID, and a local `OPEN_SANDBOX_API_KEY`. Stable workflow defaults such as image tag, controller version, CLI version, snapshot defaults, and example image live in the `Makefile` and can still be overridden on the make command line when needed. Deploy and smoke-test targets create/backfill this file automatically without overwriting existing environment values. During migration, known generated stable defaults are pruned from existing `.make.env` files so future Makefile defaults apply. If you use a custom `LOCAL_CONFIG` path, add it to `.gitignore` or `.git/info/exclude` before generating secrets.
+The generated `.make.env` file is ignored by git and contains environment-specific values: resource names, region, namespace, the current Azure subscription ID, and a local `OPEN_SANDBOX_API_KEY`. Stable workflow defaults such as node pool sizing, image tag, controller version, CLI version, snapshot defaults, and example image live in the `Makefile` and can still be overridden on the make command line when needed. Deploy and smoke-test targets create/backfill this file automatically without overwriting existing environment values. During migration, known generated stable defaults are pruned from existing `.make.env` files so future Makefile defaults apply. If you use a custom `LOCAL_CONFIG` path, add it to `.gitignore` or `.git/info/exclude` before generating secrets.
 
 By default this sample uses managed identity `AcrPull` for the server image path and does not create registry credentials. OpenSandbox pause/resume needs push and pull credentials for root filesystem snapshot images; for disposable examples, opt in with `ENABLE_SNAPSHOT_REGISTRY_SECRET=true ACR_ADMIN_USER_ENABLED=true`, or create your own `kubernetes.io/dockerconfigjson` secret named by `OPEN_SANDBOX_SNAPSHOT_SECRET` before pausing sandboxes.
 
@@ -65,6 +67,7 @@ make image-push
 make k8s-deploy
 make smoke-test
 make cli-smoke-test
+make gvisor-nodepool-add
 make gvisor-install
 make gvisor-smoke-test
 make firecracker-nodepool-add
@@ -77,20 +80,22 @@ make clean-opensandbox-crds
 make infra-delete
 ```
 
-The gVisor targets mutate AKS node host files and restart `containerd`; they are
-for disposable experiments or isolated test node pools only. See
+The gVisor targets create/use a dedicated tainted user node pool through Bicep,
+then mutate node host files and restart `containerd`. They are for disposable
+experiments or isolated test node pools only. See
 `examples/gvisor-runtime/README.md` before running them.
 
-The Firecracker targets create/use a dedicated tainted user node pool and mutate
-node host files to install Kata's Firecracker shim plus devmapper snapshotter
-configuration. See `deploy/firecracker-runtime/README.md` before running them.
+The Firecracker targets create/use a dedicated tainted user node pool through
+Bicep and mutate node host files to install Kata's Firecracker shim plus
+devmapper snapshotter configuration. See `deploy/firecracker-runtime/README.md`
+before running them.
 
-Cleanup targets require explicit confirmation to avoid deleting the wrong environment:
+Kubernetes cleanup targets require explicit confirmation to avoid deleting the wrong environment. `infra-delete` deletes the configured resource group without `CONFIRM_*`, but still rejects exported environment identities and verifies the current Azure subscription matches `SUBSCRIPTION_ID`.
 
 ```bash
 make clean-k8s CONFIRM_AKS_NAME=<your-aks-name> CONFIRM_RESOURCE_GROUP=<your-resource-group> CONFIRM_SUBSCRIPTION_ID=<your-subscription-id> CONFIRM_OPEN_SANDBOX_NAMESPACE=<your-namespace>
 make clean-opensandbox-crds CONFIRM_AKS_NAME=<your-aks-name> CONFIRM_RESOURCE_GROUP=<your-resource-group> CONFIRM_SUBSCRIPTION_ID=<your-subscription-id> CONFIRM_DELETE_OPEN_SANDBOX_CRDS=delete-cluster-wide-opensandbox-crds
-make infra-delete CONFIRM_RESOURCE_GROUP=<your-resource-group> CONFIRM_SUBSCRIPTION_ID=<your-subscription-id>
+make infra-delete
 ```
 
 For cleanup and deletion, identity values must come from `.make.env` or explicit make command-line variables such as `make clean-k8s AKS_NAME=... RESOURCE_GROUP=... SUBSCRIPTION_ID=... OPEN_SANDBOX_NAMESPACE=...`. Exported environment variables are intentionally rejected for these destructive targets.
@@ -158,9 +163,9 @@ OpenSandbox-created workload pods should show `kata-vm-isolation`.
 
 Treat `runtimeClassName`, not the `uname` release alone, as the primary proof that the OpenSandbox workload is using Kata. In this example the Kata path is configured in three places:
 
-- The AKS node pool is created with `workloadRuntime: 'KataMshvVmIsolation'` in `infra/main.bicep`.
+- The AKS Kata user pool is created with `workloadRuntime: 'KataMshvVmIsolation'` in `infra/main.bicep`; the system pool remains non-Kata Azure Linux.
 - OpenSandbox is configured with `k8s_runtime_class = "kata-vm-isolation"` in `deploy/opensandbox-server/config/sandbox.toml`.
-- The BatchSandbox template sets `runtimeClassName: kata-vm-isolation` in `deploy/opensandbox-server/k8s/batchsandbox-template.yaml`.
+- The BatchSandbox template sets `runtimeClassName: kata-vm-isolation` and targets `kubernetes.azure.com/agentpool=$KATA_NODEPOOL_NAME` in `deploy/opensandbox-server/k8s/batchsandbox-template.yaml`.
 
 For a live comparison, create one regular pod and one Kata pod on the cluster, then compare their runtime classes and kernel strings:
 
@@ -174,6 +179,13 @@ metadata:
   name: proof-kata
 spec:
   runtimeClassName: kata-vm-isolation
+  nodeSelector:
+    kubernetes.azure.com/agentpool: katauser
+  tolerations:
+    - key: kata
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
   containers:
   - name: proof
     image: python:3.12-slim
@@ -200,11 +212,11 @@ kubectl exec -n opensandbox proof-kata -- uname -a
 kubectl delete pod proof-normal proof-kata -n opensandbox --ignore-not-found
 ```
 
-Example output from this cluster showed both pods on the same node and both using the same kernel release, while only the Kata pod had `runtimeClassName: kata-vm-isolation`:
+Example output from this cluster should show the regular pod on the non-Kata system pool and the Kata pod on the dedicated Kata user pool, while only the Kata pod has `runtimeClassName: kata-vm-isolation`:
 
 ```text
-proof-normal        <empty>               <same-node-name>
-proof-kata          kata-vm-isolation     <same-node-name>
+proof-normal        <empty>               <system-node-name>
+proof-kata          kata-vm-isolation     <kata-node-name>
 
 Linux proof-normal 6.6.137.mshv1-1.azl3 #1 SMP Tue May 19 17:27:14 UTC 2026 x86_64 GNU/Linux
 Linux proof-kata   6.6.137.mshv1-1.azl3 #1 SMP Tue May 19 17:02:13 UTC 2026 x86_64 GNU/Linux

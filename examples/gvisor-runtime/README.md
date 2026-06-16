@@ -1,11 +1,23 @@
 # gVisor runtime on AKS
 
-This example installs the gVisor `runsc` runtime handler on AKS nodes and creates a
-Kubernetes `RuntimeClass` named `gvisor`.
+This example installs the gVisor `runsc` runtime handler on a dedicated AKS user
+node pool and creates a Kubernetes `RuntimeClass` named `gvisor`.
 
 This is not a supported AKS feature. It mutates managed node host files and restarts
-`containerd`. Node image upgrades, scale-out, or reimage operations can remove these
-changes. Use this only for disposable experiments or isolated test node pools.
+`containerd`. Node image upgrades, scale-out, or reimage operations can remove
+these changes. Use this only for disposable experiments or isolated test node
+pools.
+
+## Requirements
+
+- A dedicated user node pool.
+- The node pool must be tainted with `gvisor=true:NoSchedule`.
+
+Create the node pool through Bicep with:
+
+```bash
+make gvisor-nodepool-add
+```
 
 ## Install
 
@@ -24,6 +36,9 @@ The installer:
 - appends the `runsc` containerd runtime handler if missing
 - writes `/etc/containerd/runsc.toml`
 - restarts `containerd`
+
+The installer runs as a DaemonSet constrained to
+`kubernetes.azure.com/agentpool=$GVISOR_NODEPOOL_NAME`.
 
 The installer writes a backup before changing containerd config:
 
