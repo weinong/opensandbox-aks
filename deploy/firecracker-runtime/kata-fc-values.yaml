@@ -1,0 +1,25 @@
+nodeSelector:
+  kubernetes.azure.com/agentpool: fcpool
+
+tolerations:
+  - key: firecracker
+    operator: Equal
+    value: "true"
+    effect: NoSchedule
+
+snapshotter:
+  setup: []
+
+shims:
+  disableAll: true
+  fc:
+    enabled: true
+    containerd:
+      snapshotter: devmapper
+
+runtimeClasses:
+  enabled: true
+  createDefault: false
+
+defaultShim:
+  amd64: fc

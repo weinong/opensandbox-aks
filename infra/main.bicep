@@ -29,6 +29,19 @@ param assignAcrPullRole bool = true
 @description('Enable ACR admin credentials. Intended for examples when role assignment permissions are unavailable.')
 param acrAdminUserEnabled bool = false
 
+@description('Create an additional tainted user node pool for experimental Firecracker runtime work.')
+param enableFirecrackerNodePool bool = false
+
+@description('Firecracker experiment node pool name.')
+param firecrackerNodePoolName string = 'fcpool'
+
+@description('VM size for the Firecracker experiment node pool. Must expose /dev/kvm.')
+param firecrackerNodeVmSize string = 'Standard_D2s_v3'
+
+@minValue(1)
+@description('Node count for the Firecracker experiment node pool.')
+param firecrackerNodeCount int = 1
+
 @description('Tags applied to all resources.')
 param tags object = {
   workload: 'opensandbox-kata-example'
@@ -95,6 +108,26 @@ resource aks 'Microsoft.ContainerService/managedClusters@2024-10-01' = {
   properties: union(aksBaseProperties, aksVersionProperties)
 }
 
+resource firecrackerPool 'Microsoft.ContainerService/managedClusters/agentPools@2024-10-01' = if (enableFirecrackerNodePool) {
+  parent: aks
+  name: firecrackerNodePoolName
+  properties: {
+    mode: 'User'
+    count: firecrackerNodeCount
+    vmSize: firecrackerNodeVmSize
+    osType: 'Linux'
+    osSKU: 'AzureLinux'
+    type: 'VirtualMachineScaleSets'
+    enableAutoScaling: false
+    nodeTaints: [
+      'firecracker=true:NoSchedule'
+    ]
+    nodeLabels: {
+      'runtime-experiment': 'firecracker'
+    }
+  }
+}
+
 resource acrPullRoleDefinition 'Microsoft.Authorization/roleDefinitions@2022-04-01' existing = {
   scope: subscription()
   name: '7f951dda-4ed3-4680-a7ca-43fe172d538d'
@@ -117,3 +150,4 @@ output recommendedSku string = nodeVmSize
 output confidentialContainerSku string = 'Standard_DC8as_cc_v5'
 output acrAdminUserEnabled bool = hasAcr ? acrAdminUserEnabled : false
 output workloadRuntime string = workloadRuntime
+output firecrackerNodePoolName string = enableFirecrackerNodePool ? firecrackerPool.name : ''

@@ -32,11 +32,15 @@ AKS_NAME ?= osb-kata-aks
 ACR_NAME ?=
 NODE_VM_SIZE ?= Standard_D4s_v3
 NODE_COUNT ?= 3
+FIRECRACKER_NODEPOOL_NAME ?= fcpool
+FIRECRACKER_NODE_VM_SIZE ?= Standard_D2s_v3
+FIRECRACKER_NODE_COUNT ?= 1
 ASSIGN_ACR_PULL_ROLE ?= true
 ACR_ADMIN_USER_ENABLED ?= false
 OPEN_SANDBOX_NAMESPACE ?= opensandbox
 OPEN_SANDBOX_CONTROLLER_VERSION ?= 0.1.0
 OPEN_SANDBOX_CLI_VERSION ?= 0.1.1
+KATA_DEPLOY_CHART ?= https://github.com/kata-containers/kata-containers/releases/download/3.31.0/kata-deploy-3.31.0.tgz
 SERVER_IMAGE_NAME ?= opensandbox-kata-server
 SERVER_IMAGE_TAG ?= latest
 SANDBOX_IMAGE ?= python:3.12-slim
@@ -53,7 +57,7 @@ CONFIGURED_TARGETS := all print-config infra-deploy aks-credentials acr-login im
 INTERNAL_TARGETS := $(addprefix _,$(CONFIGURED_TARGETS))
 MAKEFILE_PATH := $(abspath $(firstword $(MAKEFILE_LIST)))
 
-.PHONY: $(CONFIGURED_TARGETS) $(INTERNAL_TARGETS) local-config check-tools check-smoke-tools check-acr-vars check-api-key status clean-k8s infra-delete gvisor-install gvisor-smoke-test gvisor-clean
+.PHONY: $(CONFIGURED_TARGETS) $(INTERNAL_TARGETS) local-config check-tools check-smoke-tools check-acr-vars check-api-key status clean-k8s infra-delete gvisor-install gvisor-smoke-test gvisor-clean firecracker-nodepool-add firecracker-install firecracker-smoke-test firecracker-clean
 
 define configured_target
 $1: local-config
@@ -137,6 +141,9 @@ local-config:
 		add_if_missing ACR_NAME "ACR_NAME ?= $$acr_name"; \
 		add_if_missing NODE_VM_SIZE 'NODE_VM_SIZE ?= Standard_D4s_v3'; \
 		add_if_missing NODE_COUNT 'NODE_COUNT ?= 3'; \
+		add_if_missing FIRECRACKER_NODEPOOL_NAME 'FIRECRACKER_NODEPOOL_NAME ?= fcpool'; \
+		add_if_missing FIRECRACKER_NODE_VM_SIZE 'FIRECRACKER_NODE_VM_SIZE ?= Standard_D2s_v3'; \
+		add_if_missing FIRECRACKER_NODE_COUNT 'FIRECRACKER_NODE_COUNT ?= 1'; \
 		add_if_missing ASSIGN_ACR_PULL_ROLE 'ASSIGN_ACR_PULL_ROLE ?= true'; \
 		add_if_missing ACR_ADMIN_USER_ENABLED 'ACR_ADMIN_USER_ENABLED ?= false'; \
 		add_if_missing OPEN_SANDBOX_NAMESPACE 'OPEN_SANDBOX_NAMESPACE ?= opensandbox'; \
@@ -166,10 +173,14 @@ _print-config:
 	@echo "ACR_NAME=$(ACR_NAME)"
 	@echo "NODE_VM_SIZE=$(NODE_VM_SIZE)"
 	@echo "NODE_COUNT=$(NODE_COUNT)"
+	@echo "FIRECRACKER_NODEPOOL_NAME=$(FIRECRACKER_NODEPOOL_NAME)"
+	@echo "FIRECRACKER_NODE_VM_SIZE=$(FIRECRACKER_NODE_VM_SIZE)"
+	@echo "FIRECRACKER_NODE_COUNT=$(FIRECRACKER_NODE_COUNT)"
 	@echo "ASSIGN_ACR_PULL_ROLE=$(ASSIGN_ACR_PULL_ROLE)"
 	@echo "ACR_ADMIN_USER_ENABLED=$(ACR_ADMIN_USER_ENABLED)"
 	@echo "OPEN_SANDBOX_NAMESPACE=$(OPEN_SANDBOX_NAMESPACE)"
 	@echo "OPEN_SANDBOX_CLI_VERSION=$(OPEN_SANDBOX_CLI_VERSION)"
+	@echo "KATA_DEPLOY_CHART=$(KATA_DEPLOY_CHART)"
 	@echo "SERVER_IMAGE=$(SERVER_IMAGE)"
 
 check-tools:
@@ -326,6 +337,46 @@ gvisor-clean:
 	kubectl delete job gvisor-installer -n gvisor-install --ignore-not-found
 	kubectl delete configmap gvisor-installer-script -n gvisor-install --ignore-not-found
 	kubectl delete namespace gvisor-install --ignore-not-found
+
+firecracker-nodepool-add:
+	az aks nodepool add \
+		--resource-group "$(RESOURCE_GROUP)" \
+		--cluster-name "$(AKS_NAME)" \
+		--name "$(FIRECRACKER_NODEPOOL_NAME)" \
+		--mode User \
+		--node-count $(FIRECRACKER_NODE_COUNT) \
+		--node-vm-size "$(FIRECRACKER_NODE_VM_SIZE)" \
+		--os-sku AzureLinux \
+		--node-taints firecracker=true:NoSchedule \
+		--labels runtime-experiment=firecracker
+	kubectl wait --for=condition=Ready node -l kubernetes.azure.com/agentpool=$(FIRECRACKER_NODEPOOL_NAME) --timeout=600s
+
+firecracker-install:
+	"$${HELM:-helm}" upgrade --install kata-fc "$(KATA_DEPLOY_CHART)" \
+		-n kube-system \
+		-f deploy/firecracker-runtime/kata-fc-values.yaml \
+		--wait \
+		--timeout 20m
+	kubectl apply -f deploy/firecracker-runtime/devmapper-installer.yaml
+	kubectl rollout status daemonset/devmapper-installer -n firecracker-install --timeout=240s
+	sleep 20
+	kubectl wait --for=condition=Ready node -l kubernetes.azure.com/agentpool=$(FIRECRACKER_NODEPOOL_NAME) --timeout=300s
+	kubectl apply -f deploy/firecracker-runtime/prepull.yaml
+	kubectl rollout status daemonset/firecracker-prepull -n firecracker-install --timeout=240s
+	sleep 20
+	kubectl get runtimeclass kata-fc
+
+firecracker-smoke-test:
+	kubectl delete pod -n firecracker-smoke kata-fc-smoke --ignore-not-found
+	kubectl apply -f deploy/firecracker-runtime/kata-fc-smoke-pod.yaml
+	kubectl wait --for=condition=Ready pod/kata-fc-smoke -n firecracker-smoke --timeout=360s
+	kubectl get pod kata-fc-smoke -n firecracker-smoke -o jsonpath='{.metadata.name}{"\t"}{.spec.runtimeClassName}{"\t"}{.spec.nodeName}{"\t"}{.status.phase}{"\n"}'
+	kubectl exec -n firecracker-smoke kata-fc-smoke -- uname -a
+
+firecracker-clean:
+	kubectl delete namespace firecracker-smoke --ignore-not-found
+	kubectl delete namespace firecracker-install --ignore-not-found
+	"$${HELM:-helm}" uninstall kata-fc -n kube-system || true
 
 clean-k8s:
 	$(call reject_env_var,AKS_NAME,cleanup)

@@ -9,6 +9,7 @@ The example provisions AKS and Azure Container Registry with Bicep, installs the
 - `infra/`: Bicep templates for AKS and ACR.
 - `deploy/opensandbox-server/`: OpenSandbox server Dockerfile, Kubernetes manifests, and server config.
 - `deploy/gvisor-runtime/`: optional unsupported gVisor runtime installer and smoke test manifests for AKS nodes.
+- `deploy/firecracker-runtime/`: optional unsupported Firecracker runtime installer and smoke test manifests for a dedicated AKS user node pool.
 - `examples/python-client/`: Python SDK smoke test and step-by-step client instructions.
 - `examples/cli-client/`: `osb` CLI smoke test and step-by-step CLI instructions.
 - `examples/gvisor-runtime/`: optional unsupported gVisor runtime usage notes.
@@ -60,6 +61,9 @@ make smoke-test
 make cli-smoke-test
 make gvisor-install
 make gvisor-smoke-test
+make firecracker-nodepool-add
+make firecracker-install
+make firecracker-smoke-test
 make clean-k8s
 make infra-delete
 ```
@@ -67,6 +71,10 @@ make infra-delete
 The gVisor targets mutate AKS node host files and restart `containerd`; they are
 for disposable experiments or isolated test node pools only. See
 `examples/gvisor-runtime/README.md` before running them.
+
+The Firecracker targets create/use a dedicated tainted user node pool and mutate
+node host files to install Kata's Firecracker shim plus devmapper snapshotter
+configuration. See `deploy/firecracker-runtime/README.md` before running them.
 
 Cleanup targets require explicit confirmation to avoid deleting the wrong environment:
 
