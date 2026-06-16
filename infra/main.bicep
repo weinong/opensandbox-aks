@@ -23,7 +23,7 @@ param kubernetesVersion string = ''
 @description('AKS pod sandboxing workload runtime. Newer AKS API versions require KataMshvVmIsolation.')
 param workloadRuntime string = 'KataMshvVmIsolation'
 
-@description('Create an AcrPull role assignment for the AKS kubelet identity. Requires Microsoft.Authorization/roleAssignments/write.')
+@description('Create an AcrPull role assignment for the AKS kubelet/nodepool managed identity. Requires Microsoft.Authorization/roleAssignments/write.')
 param assignAcrPullRole bool = true
 
 @description('Enable ACR admin credentials. Intended for examples when role assignment permissions are unavailable.')
@@ -84,6 +84,7 @@ var aksVersionProperties = empty(kubernetesVersion) ? {} : {
 }
 
 var hasAcr = !empty(acrName)
+var kubeletIdentityObjectId = aks.properties.identityProfile.kubeletidentity.objectId
 
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = if (hasAcr) {
   name: acrName
@@ -137,7 +138,7 @@ resource aksAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (a
   name: guid(aks.id, acr.id, acrPullRoleDefinition.id)
   scope: acr
   properties: {
-    principalId: aks.properties.identityProfile.kubeletidentity.objectId
+    principalId: kubeletIdentityObjectId
     principalType: 'ServicePrincipal'
     roleDefinitionId: acrPullRoleDefinition.id
   }
