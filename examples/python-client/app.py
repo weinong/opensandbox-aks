@@ -44,7 +44,7 @@ async def main() -> None:
             print(f"sandbox kernel: {first_stdout_text(uname)}")
 
             await sandbox.files.write_files([
-                WriteEntry(path="/tmp/opensandbox-kata.txt", data="kata smoke test", mode=0o644)
+                WriteEntry(path="/tmp/opensandbox-kata.txt", data="kata example", mode=0o644)
             ])
             content = await sandbox.files.read_file("/tmp/opensandbox-kata.txt")
             print(f"file roundtrip: {content}")

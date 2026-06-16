@@ -12,10 +12,10 @@ It creates a sandbox, checks health, runs commands, writes and reads a file, ver
 
 ## Automated Run
 
-Run the full CLI smoke test from the repository root after `make k8s-deploy`:
+Run the full CLI example from the repository root after `make k8s-deploy`:
 
 ```bash
-make cli-smoke-test
+make cli-client-example
 ```
 
 The target installs `opensandbox-cli` into `.venv`, port-forwards the OpenSandbox server, runs `osb`, verifies `kata-optimized`, and kills the sandbox when finished.
@@ -78,7 +78,7 @@ osb --no-color --domain localhost:8080 --protocol http --use-server-proxy comman
 Write and read a file:
 
 ```bash
-osb --no-color --domain localhost:8080 --protocol http --use-server-proxy file write "$SANDBOX_ID" /tmp/opensandbox-osb-cli.txt -c 'osb cli smoke test' -o json
+osb --no-color --domain localhost:8080 --protocol http --use-server-proxy file write "$SANDBOX_ID" /tmp/opensandbox-osb-cli.txt -c 'osb cli example' -o json
 osb --no-color --domain localhost:8080 --protocol http --use-server-proxy file cat "$SANDBOX_ID" /tmp/opensandbox-osb-cli.txt -o raw
 ```
 

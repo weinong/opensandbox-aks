@@ -68,11 +68,11 @@ SERVER_IMAGE := $(ACR_LOGIN_SERVER)/$(SERVER_IMAGE_NAME):$(SERVER_IMAGE_TAG)
 AZ_SUBSCRIPTION_ARG := $(if $(SUBSCRIPTION_ID),--subscription "$(SUBSCRIPTION_ID)",)
 WAIT_FOR_AKS_SUCCEEDED = set -euo pipefail; for i in $$(seq 1 180); do state=$$(az aks show --resource-group "$(RESOURCE_GROUP)" --name "$(AKS_NAME)" $(AZ_SUBSCRIPTION_ARG) --query provisioningState -o tsv 2>/dev/null || true); if [ "$$state" = "Succeeded" ]; then exit 0; fi; if [ -z "$$state" ]; then echo "Waiting for AKS $(AKS_NAME) to be readable"; else echo "Waiting for AKS $(AKS_NAME) provisioningState=$$state"; fi; sleep 10; done; echo "Timed out waiting for AKS $(AKS_NAME) to reach provisioningState=Succeeded"; exit 1
 
-CONFIGURED_TARGETS := all print-config infra-deploy aks-credentials acr-login image-build image-push controller-install k8s-deploy smoke-test cli-smoke-test pause-renew-example pause-renew-cli-example
+CONFIGURED_TARGETS := all print-config infra-deploy aks-credentials acr-login image-build image-push controller-install k8s-deploy python-client-example cli-client-example pause-renew-example pause-renew-cli-example
 INTERNAL_TARGETS := $(addprefix _,$(CONFIGURED_TARGETS))
 MAKEFILE_PATH := $(abspath $(firstword $(MAKEFILE_LIST)))
 
-.PHONY: $(CONFIGURED_TARGETS) $(INTERNAL_TARGETS) help local-config check-tools check-smoke-tools check-acr-vars check-api-key status clean-k8s clean-opensandbox-crds infra-delete gvisor-nodepool-add gvisor-install gvisor-smoke-test gvisor-clean firecracker-nodepool-add firecracker-install firecracker-smoke-test firecracker-clean
+.PHONY: $(CONFIGURED_TARGETS) $(INTERNAL_TARGETS) help local-config check-tools check-example-tools check-acr-vars check-api-key status clean-k8s clean-opensandbox-crds infra-delete gvisor-nodepool-add gvisor-install gvisor-example gvisor-clean firecracker-nodepool-add firecracker-install firecracker-example firecracker-clean
 
 define configured_target
 $1: local-config
@@ -93,14 +93,14 @@ endef
 
 $(foreach target,$(CONFIGURED_TARGETS),$(eval $(call configured_target,$(target))))
 
-_all: check-tools check-api-key _infra-deploy _aks-credentials _acr-login _image-build _image-push _controller-install _k8s-deploy _smoke-test
+_all: check-tools check-api-key _infra-deploy _aks-credentials _acr-login _image-build _image-push _controller-install _k8s-deploy _python-client-example
 
 help:
 	@printf '%s\n' \
 		'OpenSandbox AKS Make targets' \
 		'' \
 		'Core workflow:' \
-		'  make all                  Deploy infra, install app, and run smoke test' \
+		'  make all                  Deploy infra, install app, and run Python example' \
 		'  make local-config         Create/update ignored local config file' \
 		'  make print-config         Show effective configuration' \
 		'  make infra-deploy         Deploy AKS, ACR, system pool, and Kata user pool' \
@@ -108,21 +108,21 @@ help:
 		'  make image-build          Build opensandbox-server image' \
 		'  make image-push           Push opensandbox-server image' \
 		'  make controller-install   Install OpenSandbox controller' \
-		'  make k8s-deploy           Deploy opensandbox-server Kubernetes resources' \
-		'  make smoke-test           Run Python SDK smoke test' \
-		'  make cli-smoke-test       Run osb CLI smoke test' \
+		'  make k8s-deploy           Build/push image and deploy Kubernetes resources' \
 		'' \
 		'Runtime experiments:' \
 		'  make gvisor-nodepool-add      Add dedicated gVisor pool through Bicep' \
 		'  make gvisor-install           Install gVisor on the dedicated pool' \
-		'  make gvisor-smoke-test        Run gVisor smoke pod' \
+		'  make gvisor-example           Run gVisor runtime example pod' \
 		'  make gvisor-clean             Remove gVisor Kubernetes resources' \
 		'  make firecracker-nodepool-add Add dedicated Firecracker pool through Bicep' \
 		'  make firecracker-install      Install Kata Firecracker runtime support' \
-		'  make firecracker-smoke-test   Run Firecracker smoke pod' \
+		'  make firecracker-example      Run Firecracker runtime example pod' \
 		'  make firecracker-clean        Remove Firecracker Kubernetes resources' \
 		'' \
 		'Examples:' \
+		'  make python-client-example Run Python SDK client example' \
+		'  make cli-client-example    Run osb CLI client example' \
 		'  make pause-renew-example      Run Python pause/resume example' \
 		'  make pause-renew-cli-example  Run CLI pause/resume example' \
 		'' \
@@ -279,7 +279,7 @@ check-tools:
 	@command -v python3 >/dev/null || (echo "python3 is required"; exit 1)
 	@command -v curl >/dev/null || (echo "curl is required"; exit 1)
 
-check-smoke-tools:
+check-example-tools:
 	@command -v kubectl >/dev/null || (echo "kubectl is required"; exit 1)
 	@command -v python3 >/dev/null || (echo "python3 is required"; exit 1)
 	@command -v curl >/dev/null || (echo "curl is required"; exit 1)
@@ -330,7 +330,7 @@ _acr-login: check-acr-vars
 _image-build: check-acr-vars
 	docker build -t "$(SERVER_IMAGE)" -f $(SERVER_DEPLOY_DIR)/Dockerfile .
 
-_image-push: check-acr-vars
+_image-push: check-acr-vars _image-build
 	@set -euo pipefail; \
 		login_server=$$(az acr show --name "$(ACR_NAME)" $(AZ_SUBSCRIPTION_ARG) --query loginServer -o tsv); \
 		test -n "$$login_server"; \
@@ -363,7 +363,7 @@ _controller-install:
 	kubectl apply -f $(SERVER_DEPLOY_DIR)/k8s/kata-optimized-runtimeclass.yaml
 	kubectl get runtimeclass kata-optimized
 
-_k8s-deploy: check-acr-vars check-api-key
+_k8s-deploy: check-acr-vars check-api-key _image-push
 	kubectl apply -f $(SERVER_DEPLOY_DIR)/k8s/kata-optimized-runtimeclass.yaml
 	kubectl create namespace "$(OPEN_SANDBOX_NAMESPACE)" --dry-run=client -o yaml | kubectl apply -f -
 	kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" create serviceaccount opensandbox-server --dry-run=client -o yaml | kubectl apply -f -
@@ -411,22 +411,22 @@ _k8s-deploy: check-acr-vars check-api-key
 	kubectl rollout restart deployment/opensandbox-server -n "$(OPEN_SANDBOX_NAMESPACE)"
 	kubectl rollout status deployment/opensandbox-server -n "$(OPEN_SANDBOX_NAMESPACE)" --timeout=180s
 
-_smoke-test:
+_python-client-example: check-example-tools
 	@set -e; \
 		kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" port-forward svc/opensandbox-server $(SERVER_PORT):8080 >/tmp/opensandbox-kata-port-forward.log 2>&1 & \
 		port_forward_pid=$$!; \
 		trap 'kill $$port_forward_pid >/dev/null 2>&1 || true' EXIT; \
 		for i in {1..30}; do curl -fsS http://localhost:$(SERVER_PORT)/health >/dev/null 2>&1 && break || sleep 1; done; \
 		curl -fsS http://localhost:$(SERVER_PORT)/health >/dev/null; \
-		smoke_api_key=$$(kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" get secret opensandbox-server -o jsonpath='{.data.api-key}' 2>/dev/null | base64 -d 2>/dev/null || true); \
-		smoke_api_key="$${smoke_api_key:-$${OPEN_SANDBOX_API_KEY}}"; \
-		test -n "$$smoke_api_key" || (echo "OPEN_SANDBOX_API_KEY is required, or deploy opensandbox-server with make k8s-deploy first"; exit 1); \
+		example_api_key=$$(kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" get secret opensandbox-server -o jsonpath='{.data.api-key}' 2>/dev/null | base64 -d 2>/dev/null || true); \
+		example_api_key="$${example_api_key:-$${OPEN_SANDBOX_API_KEY}}"; \
+		test -n "$$example_api_key" || (echo "OPEN_SANDBOX_API_KEY is required, or deploy opensandbox-server with make k8s-deploy first"; exit 1); \
 		python3 -m venv .venv; \
 		. .venv/bin/activate; \
 		pip install -q -r $(PYTHON_CLIENT_DIR)/requirements.txt; \
-		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_API_KEY="$$smoke_api_key" SANDBOX_IMAGE="$(SANDBOX_IMAGE)" VERIFY_KATA_WITH_KUBECTL=1 OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" python $(PYTHON_CLIENT_DIR)/app.py
+		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_API_KEY="$$example_api_key" SANDBOX_IMAGE="$(SANDBOX_IMAGE)" VERIFY_KATA_WITH_KUBECTL=1 OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" python $(PYTHON_CLIENT_DIR)/app.py
 
-_cli-smoke-test: check-smoke-tools
+_cli-client-example: check-example-tools
 	@set -euo pipefail; \
 		port_forward_log=$$(mktemp); \
 		kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" port-forward svc/opensandbox-server $(SERVER_PORT):8080 >"$$port_forward_log" 2>&1 & \
@@ -449,7 +449,7 @@ _cli-smoke-test: check-smoke-tools
 		pip install -q -r $(CLI_CLIENT_DIR)/requirements.txt opensandbox-cli==$(OPEN_SANDBOX_CLI_VERSION); \
 		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_PROTOCOL=http OPEN_SANDBOX_API_KEY="$$cli_api_key" OPEN_SANDBOX_USE_SERVER_PROXY=true SANDBOX_IMAGE="$(SANDBOX_IMAGE)" VERIFY_KATA_WITH_KUBECTL=1 OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" OSB_BIN="$$(command -v osb)" bash $(CLI_CLIENT_DIR)/osb-cli-smoke.sh
 
-_pause-renew-example: check-smoke-tools
+_pause-renew-example: check-example-tools
 	@set -euo pipefail; \
 		port_forward_log=$$(mktemp); \
 		kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" port-forward svc/opensandbox-server $(SERVER_PORT):8080 >"$$port_forward_log" 2>&1 & \
@@ -472,7 +472,7 @@ _pause-renew-example: check-smoke-tools
 		pip install -q -r $(PAUSE_RENEW_EXAMPLE_DIR)/requirements.txt; \
 		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_API_KEY="$$example_api_key" SANDBOX_IMAGE="$(SANDBOX_IMAGE)" VERIFY_WITH_KUBECTL=1 OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" python $(PAUSE_RENEW_EXAMPLE_DIR)/app.py
 
-_pause-renew-cli-example: check-smoke-tools
+_pause-renew-cli-example: check-example-tools
 	@set -euo pipefail; \
 		port_forward_log=$$(mktemp); \
 		kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" port-forward svc/opensandbox-server $(SERVER_PORT):8080 >"$$port_forward_log" 2>&1 & \
@@ -522,7 +522,7 @@ gvisor-install:
 	kubectl wait --for=condition=Ready node -l kubernetes.azure.com/agentpool=$(GVISOR_NODEPOOL_NAME) --timeout=300s
 	kubectl get runtimeclass gvisor
 
-gvisor-smoke-test:
+gvisor-example:
 	sed -e 's|__GVISOR_NODEPOOL_NAME__|$(GVISOR_NODEPOOL_NAME)|g' deploy/gvisor-runtime/gvisor-smoke-pod.yaml | kubectl apply -f -
 	kubectl wait --for=condition=Ready pod/gvisor-smoke -n gvisor-install --timeout=240s
 	kubectl get pod gvisor-smoke -n gvisor-install -o jsonpath='{.metadata.name}{"\t"}{.spec.runtimeClassName}{"\t"}{.spec.nodeName}{"\t"}{.status.phase}{"\n"}'
@@ -565,7 +565,7 @@ firecracker-install:
 	sleep 20
 	kubectl get runtimeclass kata-fc
 
-firecracker-smoke-test:
+firecracker-example:
 	kubectl delete pod -n firecracker-smoke kata-fc-smoke --ignore-not-found
 	sed -e 's|__FIRECRACKER_NODEPOOL_NAME__|$(FIRECRACKER_NODEPOOL_NAME)|g' deploy/firecracker-runtime/kata-fc-smoke-pod.yaml | kubectl apply -f -
 	kubectl wait --for=condition=Ready pod/kata-fc-smoke -n firecracker-smoke --timeout=360s

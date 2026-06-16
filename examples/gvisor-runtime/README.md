@@ -25,7 +25,7 @@ Run from the repository root after `make aks-credentials`:
 
 ```bash
 make gvisor-install
-make gvisor-smoke-test
+make gvisor-example
 ```
 
 The installer:

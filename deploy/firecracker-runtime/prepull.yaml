@@ -39,7 +39,7 @@ spec:
                 ctr -n k8s.io images pull --local --snapshotter devmapper --platform linux/amd64 mcr.microsoft.com/oss/v2/kubernetes/pause:3.6
                 ctr -n k8s.io images pull --local --snapshotter devmapper --platform linux/amd64 docker.io/library/python:3.12-slim
               '
-              echo "pre-pulled Firecracker smoke images into devmapper"
+              echo "pre-pulled Firecracker example images into devmapper"
               sleep 3600
           volumeMounts:
             - name: host

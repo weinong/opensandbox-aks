@@ -2,16 +2,16 @@
 
 This repository contains a reproducible example for running [OpenSandbox](https://github.com/opensandbox-group/OpenSandbox) on Azure Kubernetes Service with AKS Pod Sandboxing backed by Kata Containers.
 
-The example provisions AKS and Azure Container Registry with Bicep, installs the OpenSandbox Kubernetes controller, deploys an OpenSandbox lifecycle server configured for the `kata-optimized` RuntimeClass, and runs a Python SDK smoke test that creates a sandbox and executes commands inside it.
+The example provisions AKS and Azure Container Registry with Bicep, installs the OpenSandbox Kubernetes controller, deploys an OpenSandbox lifecycle server configured for the `kata-optimized` RuntimeClass, and runs a Python SDK client example that creates a sandbox and executes commands inside it.
 
 ## Layout
 
 - `infra/`: Bicep templates for AKS and ACR.
 - `deploy/opensandbox-server/`: OpenSandbox server Dockerfile, Kubernetes manifests, and server config.
-- `deploy/gvisor-runtime/`: optional unsupported gVisor runtime installer and smoke test manifests for AKS nodes.
-- `deploy/firecracker-runtime/`: optional unsupported Firecracker runtime installer and smoke test manifests for a dedicated AKS user node pool.
-- `examples/python-client/`: Python SDK smoke test and step-by-step client instructions.
-- `examples/cli-client/`: `osb` CLI smoke test and step-by-step CLI instructions.
+- `deploy/gvisor-runtime/`: optional unsupported gVisor runtime installer and example pod manifests for AKS nodes.
+- `deploy/firecracker-runtime/`: optional unsupported Firecracker runtime installer and example pod manifests for a dedicated AKS user node pool.
+- `examples/python-client/`: Python SDK example and step-by-step client instructions.
+- `examples/cli-client/`: `osb` CLI example and step-by-step CLI instructions.
 - `examples/gvisor-runtime/`: optional unsupported gVisor runtime usage notes.
 - `examples/pause-renew/`: Python SDK example for renewing expiration, pausing, resuming, and verifying persisted filesystem state.
 - `examples/pause-renew-cli/`: `osb` CLI example for the same renew, pause, and resume lifecycle.
@@ -44,7 +44,7 @@ make local-config
 make print-config
 ```
 
-The generated `.make.env` file is ignored by git and contains environment-specific values: resource names, region, namespace, the current Azure subscription ID, and a local `OPEN_SANDBOX_API_KEY`. Stable workflow defaults such as node pool sizing, image tag, controller version, CLI version, snapshot defaults, and example image live in the `Makefile` and can still be overridden on the make command line when needed. Deploy and smoke-test targets create/backfill this file automatically without overwriting existing environment values. During migration, known generated stable defaults are pruned from existing `.make.env` files so future Makefile defaults apply. If you use a custom `LOCAL_CONFIG` path, add it to `.gitignore` or `.git/info/exclude` before generating secrets.
+The generated `.make.env` file is ignored by git and contains environment-specific values: resource names, region, namespace, the current Azure subscription ID, and a local `OPEN_SANDBOX_API_KEY`. Stable workflow defaults such as node pool sizing, image tag, controller version, CLI version, snapshot defaults, and example image live in the `Makefile` and can still be overridden on the make command line when needed. Deploy and example targets create/backfill this file automatically without overwriting existing environment values. During migration, known generated stable defaults are pruned from existing `.make.env` files so future Makefile defaults apply. If you use a custom `LOCAL_CONFIG` path, add it to `.gitignore` or `.git/info/exclude` before generating secrets.
 
 By default this sample uses managed identity `AcrPull` for the server image path and does not create registry credentials. OpenSandbox pause/resume needs push and pull credentials for root filesystem snapshot images; for disposable examples, opt in with `ENABLE_SNAPSHOT_REGISTRY_SECRET=true ACR_ADMIN_USER_ENABLED=true`, or create your own `kubernetes.io/dockerconfigjson` secret named by `OPEN_SANDBOX_SNAPSHOT_SECRET` before pausing sandboxes.
 
@@ -54,7 +54,7 @@ Run the end-to-end workflow:
 make all
 ```
 
-`make all` deploys the infrastructure, installs the controller and server, then runs the Python SDK smoke test. Run the pause/resume snapshot examples separately with `make pause-renew-example` or `make pause-renew-cli-example` after the deployment is healthy.
+`make all` deploys the infrastructure, installs the controller and server, then runs the Python SDK client example. Run the pause/resume snapshot examples separately with `make pause-renew-example` or `make pause-renew-cli-example` after the deployment is healthy.
 
 Useful individual targets:
 
@@ -65,14 +65,14 @@ make acr-login
 make image-build
 make image-push
 make k8s-deploy
-make smoke-test
-make cli-smoke-test
+make python-client-example
+make cli-client-example
 make gvisor-nodepool-add
 make gvisor-install
-make gvisor-smoke-test
+make gvisor-example
 make firecracker-nodepool-add
 make firecracker-install
-make firecracker-smoke-test
+make firecracker-example
 make pause-renew-example
 make pause-renew-cli-example
 make clean-k8s
@@ -149,7 +149,7 @@ Both examples create a sandbox, renew the expiration by 30 minutes, write a file
 
 ## Validation
 
-The smoke test prints sandbox command output and the kernel/runtime details observed inside the sandbox. To verify the Kubernetes pod is using Kata, run:
+The Python client example prints sandbox command output and the kernel/runtime details observed inside the sandbox. To verify the Kubernetes pod is using Kata, run:
 
 ```bash
 kubectl get pods -n opensandbox -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.runtimeClassName}{"\n"}{end}'

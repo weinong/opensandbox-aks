@@ -12,10 +12,10 @@ It creates a sandbox, runs commands, writes and reads a file, prints `uname -a`,
 
 ## Automated Run
 
-Run the Python SDK smoke test from the repository root after `make k8s-deploy`:
+Run the Python SDK example from the repository root after `make k8s-deploy`:
 
 ```bash
-make smoke-test
+make python-client-example
 ```
 
 The target installs SDK dependencies into `.venv`, port-forwards the OpenSandbox server, runs `app.py`, verifies `kata-optimized`, and kills the sandbox when finished.

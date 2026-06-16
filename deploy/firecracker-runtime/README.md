@@ -27,7 +27,7 @@ Run from the repository root after `make aks-credentials`:
 
 ```bash
 make firecracker-install
-make firecracker-smoke-test
+make firecracker-example
 ```
 
 The installer:
@@ -38,7 +38,7 @@ The installer:
 - enables the containerd devmapper snapshotter
 - enables containerd local image pulls for the CRI plugin
 - pins the containerd sandbox image to the linux/amd64 pause manifest digest
-- pre-pulls the pause and smoke-test images with devmapper
+- pre-pulls the pause and example images with devmapper
 
 ## Use with OpenSandbox
 
