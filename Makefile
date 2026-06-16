@@ -28,13 +28,13 @@ export OPEN_SANDBOX_API_KEY
 # Environment identity values are written to LOCAL_CONFIG by make local-config.
 RESOURCE_GROUP ?= rg-opensandbox-kata
 SUBSCRIPTION_ID ?=
-LOCATION ?= eastus
+LOCATION ?= westus3
 AKS_NAME ?= osb-kata-aks
 ACR_NAME ?=
 NODE_VM_SIZE ?= Standard_D4s_v3
 SYSTEM_NODE_COUNT ?= 1
 KATA_NODEPOOL_NAME ?= katauser
-KATA_NODE_COUNT ?= 3
+KATA_NODE_COUNT ?= 1
 GVISOR_NODEPOOL_NAME ?= gvisorpool
 GVISOR_NODE_COUNT ?= 1
 FIRECRACKER_NODEPOOL_NAME ?= fcpool
@@ -65,6 +65,8 @@ PAUSE_RENEW_CLI_EXAMPLE_DIR := examples/pause-renew-cli
 
 ACR_LOGIN_SERVER := $(ACR_NAME).azurecr.io
 SERVER_IMAGE := $(ACR_LOGIN_SERVER)/$(SERVER_IMAGE_NAME):$(SERVER_IMAGE_TAG)
+AZ_SUBSCRIPTION_ARG := $(if $(SUBSCRIPTION_ID),--subscription "$(SUBSCRIPTION_ID)",)
+WAIT_FOR_AKS_SUCCEEDED = set -euo pipefail; for i in $$(seq 1 180); do state=$$(az aks show --resource-group "$(RESOURCE_GROUP)" --name "$(AKS_NAME)" $(AZ_SUBSCRIPTION_ARG) --query provisioningState -o tsv 2>/dev/null || true); if [ "$$state" = "Succeeded" ]; then exit 0; fi; if [ -z "$$state" ]; then echo "Waiting for AKS $(AKS_NAME) to be readable"; else echo "Waiting for AKS $(AKS_NAME) provisioningState=$$state"; fi; sleep 10; done; echo "Timed out waiting for AKS $(AKS_NAME) to reach provisioningState=Succeeded"; exit 1
 
 CONFIGURED_TARGETS := all print-config infra-deploy aks-credentials acr-login image-build image-push controller-install k8s-deploy smoke-test cli-smoke-test pause-renew-example pause-renew-cli-example
 INTERNAL_TARGETS := $(addprefix _,$(CONFIGURED_TARGETS))
@@ -131,7 +133,7 @@ help:
 		'' \
 		'Common overrides:' \
 		'  LOCAL_CONFIG=.make.env RESOURCE_GROUP=<name> AKS_NAME=<name> ACR_NAME=<name>' \
-		'  NODE_VM_SIZE=Standard_D4s_v3 SYSTEM_NODE_COUNT=1 KATA_NODE_COUNT=3' \
+		'  NODE_VM_SIZE=Standard_D4s_v3 SYSTEM_NODE_COUNT=1 KATA_NODE_COUNT=1' \
 		'' \
 		'Current config:'
 	@$(MAKE) --no-print-directory -f "$(MAKEFILE_PATH)" LOCAL_CONFIG="$(LOCAL_CONFIG)" _print-config
@@ -218,7 +220,7 @@ local-config:
 		remove_generated_default '^(export[[:space:]]+)?FIRECRACKER_NODEPOOL_NAME[[:space:]]*\?=[[:space:]]*fcpool$$'; \
 		remove_generated_default '^(export[[:space:]]+)?FIRECRACKER_NODE_COUNT[[:space:]]*\?=[[:space:]]*1$$'; \
 		remove_generated_default '^(export[[:space:]]+)?FIRECRACKER_NODE_VM_SIZE[[:space:]]*\?=[[:space:]]*Standard_D2s_v3$$'; \
-		location=$$(value_for '$(origin LOCATION)' '$(LOCATION)' 'eastus'); \
+		location=$$(value_for '$(origin LOCATION)' '$(LOCATION)' 'westus3'); \
 		resource_group=$$(value_for '$(origin RESOURCE_GROUP)' '$(RESOURCE_GROUP)' "rg-opensandbox-kata-$$suffix"); \
 		subscription_id=$$(value_for '$(origin SUBSCRIPTION_ID)' '$(SUBSCRIPTION_ID)' "$$current_subscription"); \
 		aks_name=$$(value_for '$(origin AKS_NAME)' '$(AKS_NAME)' "osb-kata-$$suffix"); \
@@ -293,30 +295,50 @@ check-api-key:
 	@test -n "$${OPEN_SANDBOX_API_KEY}" || (echo "OPEN_SANDBOX_API_KEY is required"; exit 1)
 
 _infra-deploy:
-	az group create --name "$(RESOURCE_GROUP)" --location "$(LOCATION)"
+	az group create --name "$(RESOURCE_GROUP)" --location "$(LOCATION)" $(AZ_SUBSCRIPTION_ARG)
 	az deployment group create \
+		--name infra-base \
+		$(AZ_SUBSCRIPTION_ARG) \
 		--resource-group "$(RESOURCE_GROUP)" \
 		--template-file infra/main.bicep \
-		--parameters aksName="$(AKS_NAME)" acrName="$(ACR_NAME)" location="$(LOCATION)" nodeVmSize="$(NODE_VM_SIZE)" systemNodeCount=$(SYSTEM_NODE_COUNT) kataNodePoolName="$(KATA_NODEPOOL_NAME)" kataNodeCount=$(KATA_NODE_COUNT) assignAcrPullRole=$(ASSIGN_ACR_PULL_ROLE) acrAdminUserEnabled=$(ACR_ADMIN_USER_ENABLED)
+		--parameters aksName="$(AKS_NAME)" acrName="$(ACR_NAME)" location="$(LOCATION)" nodeVmSize="$(NODE_VM_SIZE)" systemNodeCount=$(SYSTEM_NODE_COUNT) kataNodePoolName="$(KATA_NODEPOOL_NAME)" kataNodeCount=$(KATA_NODE_COUNT) assignAcrPullRole=false acrAdminUserEnabled=$(ACR_ADMIN_USER_ENABLED) enableKataNodePool=false
+	@$(WAIT_FOR_AKS_SUCCEEDED)
+	az deployment group create \
+		--name kata-nodepool \
+		$(AZ_SUBSCRIPTION_ARG) \
+		--resource-group "$(RESOURCE_GROUP)" \
+		--template-file infra/nodepool.bicep \
+		--parameters aksName="$(AKS_NAME)" nodePoolName="$(KATA_NODEPOOL_NAME)" nodeVmSize="$(NODE_VM_SIZE)" nodeCount=$(KATA_NODE_COUNT) runtimeExperiment=kata
+	@$(WAIT_FOR_AKS_SUCCEEDED)
+	az aks get-credentials --resource-group "$(RESOURCE_GROUP)" --name "$(AKS_NAME)" $(AZ_SUBSCRIPTION_ARG) --overwrite-existing
+	kubectl wait --for=condition=Ready node -l kubernetes.azure.com/agentpool=$(KATA_NODEPOOL_NAME) --timeout=600s
+	@if [ "$(ASSIGN_ACR_PULL_ROLE)" = "true" ] && [ -n "$(ACR_NAME)" ]; then \
+		az deployment group create \
+			--name acr-pull-role \
+			$(AZ_SUBSCRIPTION_ARG) \
+			--resource-group "$(RESOURCE_GROUP)" \
+			--template-file infra/acr-pull-role.bicep \
+			--parameters aksName="$(AKS_NAME)" acrName="$(ACR_NAME)"; \
+	fi
 
 _aks-credentials:
-	az aks get-credentials --resource-group "$(RESOURCE_GROUP)" --name "$(AKS_NAME)" --overwrite-existing
+	az aks get-credentials --resource-group "$(RESOURCE_GROUP)" --name "$(AKS_NAME)" $(AZ_SUBSCRIPTION_ARG) --overwrite-existing
 
 _acr-login: check-acr-vars
-	@az acr show --name "$(ACR_NAME)" --query loginServer -o tsv >/dev/null
+	@az acr show --name "$(ACR_NAME)" $(AZ_SUBSCRIPTION_ARG) --query loginServer -o tsv >/dev/null
 
 _image-build: check-acr-vars
 	docker build -t "$(SERVER_IMAGE)" -f $(SERVER_DEPLOY_DIR)/Dockerfile .
 
 _image-push: check-acr-vars
 	@set -euo pipefail; \
-		login_server=$$(az acr show --name "$(ACR_NAME)" --query loginServer -o tsv); \
+		login_server=$$(az acr show --name "$(ACR_NAME)" $(AZ_SUBSCRIPTION_ARG) --query loginServer -o tsv); \
 		test -n "$$login_server"; \
 		test "$(ACR_LOGIN_SERVER)" = "$$login_server"; \
 		docker_config=$$(mktemp -d); \
 		chmod 700 "$$docker_config"; \
 		trap 'DOCKER_CONFIG="$$docker_config" docker logout "'"$$login_server"'" >/dev/null 2>&1 || true; rm -rf "$$docker_config"' EXIT; \
-		token=$$(az acr login --name "$(ACR_NAME)" --expose-token --query accessToken -o tsv); \
+		token=$$(az acr login --name "$(ACR_NAME)" $(AZ_SUBSCRIPTION_ARG) --expose-token --query accessToken -o tsv); \
 		test -n "$$token"; \
 		DOCKER_CONFIG="$$docker_config" docker login "$$login_server" --username 00000000-0000-0000-0000-000000000000 --password-stdin <<< "$$token"; \
 		DOCKER_CONFIG="$$docker_config" docker push "$(SERVER_IMAGE)"
@@ -351,7 +373,7 @@ _k8s-deploy: check-acr-vars check-api-key
 		snapshot_registry_server="$${snapshot_registry%%/*}"; \
 		if [ "$(ACR_ADMIN_USER_ENABLED)" = "true" ] && [ "$$snapshot_registry_server" = "$(ACR_LOGIN_SERVER)" ]; then \
 			set -euo pipefail; \
-			password=$$(az acr credential show --name "$(ACR_NAME)" --query 'passwords[0].value' -o tsv); \
+			password=$$(az acr credential show --name "$(ACR_NAME)" $(AZ_SUBSCRIPTION_ARG) --query 'passwords[0].value' -o tsv); \
 			test -n "$$password"; \
 			printf '%s' "$$password" | REGISTRY="$(ACR_LOGIN_SERVER)" USERNAME="$(ACR_NAME)" NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" SECRET_NAME="$(OPEN_SANDBOX_SNAPSHOT_SECRET)" python3 -c 'import base64,json,os,sys; u=os.environ["USERNAME"]; p=sys.stdin.read(); r=os.environ["REGISTRY"]; ns=os.environ["NAMESPACE"]; name=os.environ["SECRET_NAME"]; auth=base64.b64encode(f"{u}:{p}".encode()).decode(); cfg={"auths":{r:{"username":u,"password":p,"auth":auth}}}; data=base64.b64encode(json.dumps(cfg,separators=(",",":")).encode()).decode(); print(f"apiVersion: v1\nkind: Secret\nmetadata:\n  name: {name}\n  namespace: {ns}\ntype: kubernetes.io/dockerconfigjson\ndata:\n  .dockerconfigjson: {data}\n")' | kubectl apply -f -; \
 		else \
@@ -361,7 +383,7 @@ _k8s-deploy: check-acr-vars check-api-key
 	fi
 	@if [ "$(ASSIGN_ACR_PULL_ROLE)" = "false" ] && [ "$(ACR_ADMIN_USER_ENABLED)" = "true" ]; then \
 		set -euo pipefail; \
-		password=$$(az acr credential show --name "$(ACR_NAME)" --query 'passwords[0].value' -o tsv); \
+		password=$$(az acr credential show --name "$(ACR_NAME)" $(AZ_SUBSCRIPTION_ARG) --query 'passwords[0].value' -o tsv); \
 		test -n "$$password"; \
 		kubectl delete secret acr-pull -n "$(OPEN_SANDBOX_NAMESPACE)" --ignore-not-found; \
 		printf '%s' "$$password" | REGISTRY="$(ACR_LOGIN_SERVER)" USERNAME="$(ACR_NAME)" NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" python3 -c 'import base64,json,os,sys; u=os.environ["USERNAME"]; p=sys.stdin.read(); r=os.environ["REGISTRY"]; ns=os.environ["NAMESPACE"]; auth=base64.b64encode(f"{u}:{p}".encode()).decode(); cfg={"auths":{r:{"username":u,"password":p,"auth":auth}}}; data=base64.b64encode(json.dumps(cfg,separators=(",",":")).encode()).decode(); print(f"apiVersion: v1\nkind: Secret\nmetadata:\n  name: acr-pull\n  namespace: {ns}\ntype: kubernetes.io/dockerconfigjson\ndata:\n  .dockerconfigjson: {data}\n")' | kubectl create -f -; \
@@ -478,10 +500,15 @@ status:
 	kubectl get sandboxsnapshots -n "$(OPEN_SANDBOX_NAMESPACE)" || true
 
 gvisor-nodepool-add:
+	@$(WAIT_FOR_AKS_SUCCEEDED)
 	az deployment group create \
+		--name gvisor-nodepool \
+		$(AZ_SUBSCRIPTION_ARG) \
 		--resource-group "$(RESOURCE_GROUP)" \
-		--template-file infra/main.bicep \
-		--parameters aksName="$(AKS_NAME)" acrName="$(ACR_NAME)" location="$(LOCATION)" nodeVmSize="$(NODE_VM_SIZE)" systemNodeCount=$(SYSTEM_NODE_COUNT) kataNodePoolName="$(KATA_NODEPOOL_NAME)" kataNodeCount=$(KATA_NODE_COUNT) assignAcrPullRole=$(ASSIGN_ACR_PULL_ROLE) acrAdminUserEnabled=$(ACR_ADMIN_USER_ENABLED) enableGvisorNodePool=true gvisorNodePoolName="$(GVISOR_NODEPOOL_NAME)" gvisorNodeCount=$(GVISOR_NODE_COUNT)
+		--template-file infra/nodepool.bicep \
+		--parameters aksName="$(AKS_NAME)" nodePoolName="$(GVISOR_NODEPOOL_NAME)" nodeVmSize="$(NODE_VM_SIZE)" nodeCount=$(GVISOR_NODE_COUNT) runtimeExperiment=gvisor
+	@$(WAIT_FOR_AKS_SUCCEEDED)
+	az aks get-credentials --resource-group "$(RESOURCE_GROUP)" --name "$(AKS_NAME)" $(AZ_SUBSCRIPTION_ARG) --overwrite-existing
 	kubectl wait --for=condition=Ready node -l kubernetes.azure.com/agentpool=$(GVISOR_NODEPOOL_NAME) --timeout=600s
 
 gvisor-install:
@@ -506,10 +533,15 @@ gvisor-clean:
 	kubectl delete namespace gvisor-install --ignore-not-found
 
 firecracker-nodepool-add:
+	@$(WAIT_FOR_AKS_SUCCEEDED)
 	az deployment group create \
+		--name firecracker-nodepool \
+		$(AZ_SUBSCRIPTION_ARG) \
 		--resource-group "$(RESOURCE_GROUP)" \
-		--template-file infra/main.bicep \
-		--parameters aksName="$(AKS_NAME)" acrName="$(ACR_NAME)" location="$(LOCATION)" nodeVmSize="$(NODE_VM_SIZE)" systemNodeCount=$(SYSTEM_NODE_COUNT) kataNodePoolName="$(KATA_NODEPOOL_NAME)" kataNodeCount=$(KATA_NODE_COUNT) assignAcrPullRole=$(ASSIGN_ACR_PULL_ROLE) acrAdminUserEnabled=$(ACR_ADMIN_USER_ENABLED) enableFirecrackerNodePool=true firecrackerNodePoolName="$(FIRECRACKER_NODEPOOL_NAME)" firecrackerNodeCount=$(FIRECRACKER_NODE_COUNT)
+		--template-file infra/nodepool.bicep \
+		--parameters aksName="$(AKS_NAME)" nodePoolName="$(FIRECRACKER_NODEPOOL_NAME)" nodeVmSize="$(NODE_VM_SIZE)" nodeCount=$(FIRECRACKER_NODE_COUNT) runtimeExperiment=firecracker
+	@$(WAIT_FOR_AKS_SUCCEEDED)
+	az aks get-credentials --resource-group "$(RESOURCE_GROUP)" --name "$(AKS_NAME)" $(AZ_SUBSCRIPTION_ARG) --overwrite-existing
 	kubectl wait --for=condition=Ready node -l kubernetes.azure.com/agentpool=$(FIRECRACKER_NODEPOOL_NAME) --timeout=600s
 
 firecracker-install:

@@ -42,6 +42,9 @@ param enableFirecrackerNodePool bool = false
 @description('Create an additional tainted user node pool for experimental gVisor runtime work.')
 param enableGvisorNodePool bool = false
 
+@description('Create the dedicated Kata user node pool. Disable for the initial AKS cluster deployment so follow-up pool operations do not race cluster creation.')
+param enableKataNodePool bool = false
+
 @description('Firecracker experiment node pool name.')
 param firecrackerNodePoolName string = 'fcpool'
 
@@ -122,7 +125,7 @@ resource aks 'Microsoft.ContainerService/managedClusters@2024-10-01' = {
   properties: union(aksBaseProperties, aksVersionProperties)
 }
 
-resource kataPool 'Microsoft.ContainerService/managedClusters/agentPools@2024-10-01' = {
+resource kataPool 'Microsoft.ContainerService/managedClusters/agentPools@2024-10-01' = if (enableKataNodePool) {
   parent: aks
   name: kataNodePoolName
   properties: {
@@ -201,7 +204,7 @@ resource aksAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (a
 output aksName string = aks.name
 output acrLoginServer string = hasAcr ? acr!.properties.loginServer : ''
 output kataRuntimeClass string = 'kata-vm-isolation'
-output kataNodePoolName string = kataPool.name
+output kataNodePoolName string = enableKataNodePool ? kataPool.name : ''
 output recommendedSku string = nodeVmSize
 output confidentialContainerSku string = 'Standard_DC8as_cc_v5'
 output acrAdminUserEnabled bool = hasAcr ? acrAdminUserEnabled : false
