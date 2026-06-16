@@ -2,7 +2,7 @@
 
 This example uses the upstream [`osb` CLI](https://github.com/opensandbox-group/OpenSandbox/tree/main/cli) against the OpenSandbox lifecycle server deployed by this repository.
 
-It creates a sandbox, checks health, runs commands, writes and reads a file, verifies the sandbox workload uses the AKS `kata-vm-isolation` RuntimeClass, and cleans up the sandbox.
+It creates a sandbox, checks health, runs commands, writes and reads a file, verifies the sandbox workload uses the `kata-optimized` RuntimeClass, and cleans up the sandbox.
 
 ## Prerequisites
 
@@ -18,7 +18,7 @@ Run the full CLI smoke test from the repository root after `make k8s-deploy`:
 make cli-smoke-test
 ```
 
-The target installs `opensandbox-cli` into `.venv`, port-forwards the OpenSandbox server, runs `osb`, verifies `kata-vm-isolation`, and kills the sandbox when finished.
+The target installs `opensandbox-cli` into `.venv`, port-forwards the OpenSandbox server, runs `osb`, verifies `kata-optimized`, and kills the sandbox when finished.
 
 ## Step-By-Step Run
 
@@ -88,7 +88,7 @@ Verify the workload pod uses Kata:
 kubectl get batchsandbox "$SANDBOX_ID" -n opensandbox -o jsonpath='{.spec.template.spec.runtimeClassName}{"\n"}'
 ```
 
-The output should be `kata-vm-isolation`.
+The output should be `kata-optimized`.
 
 Clean up the sandbox:
 

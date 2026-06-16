@@ -360,8 +360,11 @@ _controller-install:
 		test "$$pause_field" = "boolean" || (echo "Installed BatchSandbox CRD does not expose spec.pause; pause/resume requires OpenSandbox controller $(OPEN_SANDBOX_CONTROLLER_VERSION) CRDs"; exit 1)
 	kubectl wait --for=condition=ready pod -l control-plane=controller-manager -n opensandbox-system --timeout=180s
 	kubectl get runtimeclass kata-vm-isolation
+	kubectl apply -f $(SERVER_DEPLOY_DIR)/k8s/kata-optimized-runtimeclass.yaml
+	kubectl get runtimeclass kata-optimized
 
 _k8s-deploy: check-acr-vars check-api-key
+	kubectl apply -f $(SERVER_DEPLOY_DIR)/k8s/kata-optimized-runtimeclass.yaml
 	kubectl create namespace "$(OPEN_SANDBOX_NAMESPACE)" --dry-run=client -o yaml | kubectl apply -f -
 	kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" create serviceaccount opensandbox-server --dry-run=client -o yaml | kubectl apply -f -
 	kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" create secret generic opensandbox-server \

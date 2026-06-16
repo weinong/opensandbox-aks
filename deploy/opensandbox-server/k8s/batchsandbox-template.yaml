@@ -6,7 +6,7 @@ spec:
   replicas: 1
   template:
     spec:
-      runtimeClassName: kata-vm-isolation
+      runtimeClassName: kata-optimized
       nodeSelector:
         kubernetes.azure.com/agentpool: __KATA_NODEPOOL_NAME__
       tolerations:

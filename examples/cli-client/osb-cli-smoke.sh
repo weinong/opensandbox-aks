@@ -67,12 +67,12 @@ if [ "${VERIFY_KATA_WITH_KUBECTL:-}" = "1" ]; then
     runtime_class=$(kubectl get batchsandbox "$sandbox_id" \
       -n "$OPEN_SANDBOX_NAMESPACE" \
       -o jsonpath='{.spec.template.spec.runtimeClassName}' 2>/dev/null || true)
-    if [ "$runtime_class" = "kata-vm-isolation" ]; then
-      printf 'runtime class: kata-vm-isolation\n'
+    if [ "$runtime_class" = "kata-optimized" ]; then
+      printf 'runtime class: kata-optimized\n'
       exit 0
     fi
     sleep 1
   done
-  printf 'Sandbox %s did not use runtimeClassName=kata-vm-isolation\n' "$sandbox_id" >&2
+  printf 'Sandbox %s did not use runtimeClassName=kata-optimized\n' "$sandbox_id" >&2
   exit 1
 fi

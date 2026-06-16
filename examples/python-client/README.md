@@ -2,7 +2,7 @@
 
 This example uses the upstream OpenSandbox Python SDK against the OpenSandbox lifecycle server deployed by this repository.
 
-It creates a sandbox, runs commands, writes and reads a file, prints `uname -a`, verifies the sandbox workload uses the AKS `kata-vm-isolation` RuntimeClass, and cleans up the sandbox.
+It creates a sandbox, runs commands, writes and reads a file, prints `uname -a`, verifies the sandbox workload uses the `kata-optimized` RuntimeClass, and cleans up the sandbox.
 
 ## Prerequisites
 
@@ -18,7 +18,7 @@ Run the Python SDK smoke test from the repository root after `make k8s-deploy`:
 make smoke-test
 ```
 
-The target installs SDK dependencies into `.venv`, port-forwards the OpenSandbox server, runs `app.py`, verifies `kata-vm-isolation`, and kills the sandbox when finished.
+The target installs SDK dependencies into `.venv`, port-forwards the OpenSandbox server, runs `app.py`, verifies `kata-optimized`, and kills the sandbox when finished.
 
 ## Step-By-Step Run
 

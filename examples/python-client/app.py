@@ -64,12 +64,12 @@ async def main() -> None:
                         ],
                         text=True,
                     )
-                    if "kata-vm-isolation" in pods:
-                        print("runtime class: kata-vm-isolation")
+                    if "kata-optimized" in pods:
+                        print("runtime class: kata-optimized")
                         break
                     time.sleep(1)
                 else:
-                    raise RuntimeError("No live sandbox pod used runtimeClassName=kata-vm-isolation")
+                    raise RuntimeError("No live sandbox pod used runtimeClassName=kata-optimized")
         finally:
             await sandbox.kill()
 
