@@ -65,6 +65,8 @@ make aks-credentials
 make acr-login
 make image-build
 make image-push
+make images-build
+make images-push
 make k8s-deploy
 make python-client-example
 make cli-client-example
@@ -97,6 +99,7 @@ The VS Code Web example uses the shared OpenSandbox ingress gateway, which `make
 
 ```bash
 make k8s-deploy
+make vscode-image-push
 make vscode-example
 ```
 

@@ -82,7 +82,7 @@ INGRESS_GATEWAY_ROUTE_MODE_LINE := $(if $(filter true,$(ENABLE_INGRESS_GATEWAY))
 AZ_SUBSCRIPTION_ARG := $(if $(SUBSCRIPTION_ID),--subscription "$(SUBSCRIPTION_ID)",)
 WAIT_FOR_AKS_SUCCEEDED = set -euo pipefail; for i in $$(seq 1 180); do state=$$(az aks show --resource-group "$(RESOURCE_GROUP)" --name "$(AKS_NAME)" $(AZ_SUBSCRIPTION_ARG) --query provisioningState -o tsv 2>/dev/null || true); if [ "$$state" = "Succeeded" ]; then exit 0; fi; if [ -z "$$state" ]; then echo "Waiting for AKS $(AKS_NAME) to be readable"; else echo "Waiting for AKS $(AKS_NAME) provisioningState=$$state"; fi; sleep 10; done; echo "Timed out waiting for AKS $(AKS_NAME) to reach provisioningState=Succeeded"; exit 1
 
-CONFIGURED_TARGETS := all print-config infra-deploy aks-credentials acr-login image-build image-push controller-install k8s-deploy python-client-example cli-client-example pause-renew-example pause-renew-cli-example vscode-image-build vscode-image-push vscode-example
+CONFIGURED_TARGETS := all print-config infra-deploy aks-credentials acr-login image-build image-push images-build images-push controller-install k8s-deploy python-client-example cli-client-example pause-renew-example pause-renew-cli-example vscode-image-build vscode-image-push vscode-example
 INTERNAL_TARGETS := $(addprefix _,$(CONFIGURED_TARGETS))
 MAKEFILE_PATH := $(abspath $(firstword $(MAKEFILE_LIST)))
 
@@ -121,6 +121,8 @@ help:
 		'  make aks-credentials      Fetch kubectl credentials' \
 		'  make image-build          Build opensandbox-server image' \
 		'  make image-push           Push opensandbox-server image' \
+		'  make images-build         Build all repository images' \
+		'  make images-push          Build and push all repository images' \
 		'  make controller-install   Install OpenSandbox controller' \
 		'  make k8s-deploy           Build/push image and deploy Kubernetes resources' \
 		'' \
@@ -382,6 +384,10 @@ _image-push: check-acr-vars _image-build
 		DOCKER_CONFIG="$$docker_config" docker login "$$login_server" --username 00000000-0000-0000-0000-000000000000 --password-stdin <<< "$$token"; \
 		DOCKER_CONFIG="$$docker_config" docker push "$(SERVER_IMAGE)"
 
+_images-build: _image-build _vscode-image-build
+
+_images-push: _image-push _vscode-image-push
+
 _controller-install:
 	helm upgrade --install opensandbox-controller \
 		https://github.com/opensandbox-group/OpenSandbox/releases/download/helm/opensandbox-controller/$(OPEN_SANDBOX_CONTROLLER_VERSION)/opensandbox-controller-$(OPEN_SANDBOX_CONTROLLER_VERSION).tgz \
@@ -562,12 +568,14 @@ _vscode-image-push: check-acr-vars _vscode-image-build
 		DOCKER_CONFIG="$$docker_config" docker login "$$login_server" --username 00000000-0000-0000-0000-000000000000 --password-stdin <<< "$$token"; \
 		DOCKER_CONFIG="$$docker_config" docker push "$(VSCODE_IMAGE)"
 
-_vscode-example: check-example-tools _vscode-image-push
+_vscode-example: check-example-tools check-acr-vars
 	@set -euo pipefail; \
+		command -v az >/dev/null || (echo "az is required"; exit 1); \
 		if [ "$(ENABLE_INGRESS_GATEWAY)" != "true" ]; then \
 			echo "vscode-example requires ENABLE_INGRESS_GATEWAY=true; redeploy with make k8s-deploy"; \
 			exit 1; \
 		fi; \
+		az acr repository show-tags --name "$(ACR_NAME)" $(AZ_SUBSCRIPTION_ARG) --repository "$(VSCODE_IMAGE_NAME)" --query "[?@=='$(VSCODE_IMAGE_TAG)'] | [0]" -o tsv | grep -Fxq "$(VSCODE_IMAGE_TAG)" || (echo "$(VSCODE_IMAGE) is not pushed; run make vscode-image-push or make images-push first"; exit 1); \
 		port_forward_log=$$(mktemp); \
 		kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" port-forward svc/opensandbox-server $(SERVER_PORT):8080 >"$$port_forward_log" 2>&1 & \
 		port_forward_pid=$$!; \

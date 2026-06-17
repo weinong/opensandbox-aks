@@ -7,13 +7,14 @@ It is adapted from the upstream OpenSandbox [`examples/vscode`](https://github.c
 ## Prerequisites
 
 - The AKS OpenSandbox server is already deployed with `make k8s-deploy` from the repository root.
+- Container images are prepared with the repository image targets. Run `make vscode-image-push` for this example image, or `make images-push` to build and push all repository images.
 - `kubectl` points at the AKS cluster.
 - `docker`, `az`, `python3`, and `curl` are available locally.
 - The configured ACR is reachable by the OpenSandbox workload pods. The default managed identity `AcrPull` path from this repo handles that for images pushed to `$(ACR_NAME).azurecr.io`.
 
 ## Automated Run
 
-Build and push the VS Code sandbox image, port-forward the OpenSandbox server and shared ingress gateway, create a sandbox, start `code-server`, and print the browser URL:
+Port-forward the OpenSandbox server and shared ingress gateway, create a sandbox from the already-pushed VS Code image, start `code-server`, and print the browser URL:
 
 ```bash
 make vscode-example
@@ -30,6 +31,8 @@ ENABLE_INGRESS_GATEWAY=true
 
 The image installs pinned `code-server` release `4.124.2` from the upstream `.deb` package and verifies the package SHA-256 during build.
 
+`make vscode-example` does not rebuild or push the container image. Re-run `make vscode-image-push` after changing `examples/vscode/Dockerfile` or related image contents, and use a unique `VSCODE_IMAGE_TAG` when you need to avoid reusing a stale mutable tag such as `latest`.
+
 The printed VS Code URL uses the shared OpenSandbox ingress gateway because VS Code Web requires browser HTTP and WebSocket traffic. The launcher waits for `code-server` to answer inside the sandbox before opening the local route proxy.
 
 The example starts `code-server` with `--auth none` and binds browser access to `127.0.0.1` through local port-forwarding/proxying. Treat it as a disposable single-user development example; do not expose the printed URL or raw gateway port on a shared network.
@@ -38,6 +41,7 @@ The example starts `code-server` with `--auth none` and binds browser access to 
 
 ```bash
 make k8s-deploy
+make vscode-image-push
 make vscode-example
 ```
 
