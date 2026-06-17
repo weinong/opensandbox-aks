@@ -54,10 +54,11 @@ OPEN_SANDBOX_SNAPSHOT_SECRET ?= opensandbox-snapshot-registry
 OPEN_SANDBOX_IMAGE_COMMITTER_IMAGE ?= opensandbox/image-committer:v0.1.0
 ENABLE_INGRESS_GATEWAY ?= true
 INGRESS_GATEWAY_IMAGE ?= sandbox-registry.cn-zhangjiakou.cr.aliyuncs.com/opensandbox/ingress:v1.0.7
-INGRESS_GATEWAY_ROUTE_MODE ?= uri
+INGRESS_GATEWAY_ROUTE_MODE ?= header
 INGRESS_GATEWAY_LOCAL_PORT ?= 8081
 INGRESS_GATEWAY_HOST ?= 127.0.0.1:$(INGRESS_GATEWAY_LOCAL_PORT)
 INGRESS_GATEWAY_REPLICAS ?= 1
+VSCODE_GATEWAY_DOMAIN ?= 127.0.0.1.nip.io
 SERVER_IMAGE_NAME ?= opensandbox-kata-server
 SERVER_IMAGE_TAG ?= latest
 SANDBOX_IMAGE ?= python:3.12-slim
@@ -225,9 +226,11 @@ local-config:
 		remove_generated_default '^(export[[:space:]]+)?ENABLE_INGRESS_GATEWAY[[:space:]]*\?=[[:space:]]*(false|true)$$'; \
 		remove_generated_default '^(export[[:space:]]+)?INGRESS_GATEWAY_IMAGE[[:space:]]*\?=[[:space:]]*sandbox-registry\.cn-zhangjiakou\.cr\.aliyuncs\.com/opensandbox/ingress:v1\.0\.7$$'; \
 		remove_generated_default '^(export[[:space:]]+)?INGRESS_GATEWAY_ROUTE_MODE[[:space:]]*\?=[[:space:]]*uri$$'; \
+		remove_generated_default '^(export[[:space:]]+)?INGRESS_GATEWAY_ROUTE_MODE[[:space:]]*\?=[[:space:]]*header$$'; \
 		remove_generated_default '^(export[[:space:]]+)?INGRESS_GATEWAY_LOCAL_PORT[[:space:]]*\?=[[:space:]]*8081$$'; \
 		remove_generated_default '^(export[[:space:]]+)?INGRESS_GATEWAY_HOST[[:space:]]*\?=[[:space:]]*127\.0\.0\.1:\$$\(INGRESS_GATEWAY_LOCAL_PORT\)$$'; \
 		remove_generated_default '^(export[[:space:]]+)?INGRESS_GATEWAY_REPLICAS[[:space:]]*\?=[[:space:]]*1$$'; \
+		remove_generated_default '^(export[[:space:]]+)?VSCODE_GATEWAY_DOMAIN[[:space:]]*\?=[[:space:]]*127\.0\.0\.1\.nip\.io$$'; \
 		remove_generated_default '^(export[[:space:]]+)?SERVER_IMAGE_NAME[[:space:]]*\?=[[:space:]]*opensandbox-kata-server$$'; \
 		remove_generated_default '^(export[[:space:]]+)?SERVER_IMAGE_TAG[[:space:]]*\?=[[:space:]]*latest$$'; \
 		remove_generated_default '^(export[[:space:]]+)?SANDBOX_IMAGE[[:space:]]*\?=[[:space:]]*python:3\.12-slim$$'; \
@@ -302,6 +305,7 @@ _print-config:
 	@echo "INGRESS_GATEWAY_LOCAL_PORT=$(INGRESS_GATEWAY_LOCAL_PORT)"
 	@echo "INGRESS_GATEWAY_HOST=$(INGRESS_GATEWAY_HOST)"
 	@echo "INGRESS_GATEWAY_REPLICAS=$(INGRESS_GATEWAY_REPLICAS)"
+	@echo "VSCODE_GATEWAY_DOMAIN=$(VSCODE_GATEWAY_DOMAIN)"
 	@echo "SERVER_IMAGE=$(SERVER_IMAGE)"
 	@echo "VSCODE_IMAGE=$(VSCODE_IMAGE)"
 	@echo "VSCODE_PORT=$(VSCODE_PORT)"
@@ -330,8 +334,8 @@ check-api-key:
 	@test -n "$${OPEN_SANDBOX_API_KEY}" || (echo "OPEN_SANDBOX_API_KEY is required"; exit 1)
 
 check-ingress-gateway:
-	@if [ "$(ENABLE_INGRESS_GATEWAY)" = "true" ] && [ "$(INGRESS_GATEWAY_ROUTE_MODE)" != "uri" ]; then \
-		echo "INGRESS_GATEWAY_ROUTE_MODE must be uri"; \
+	@if [ "$(ENABLE_INGRESS_GATEWAY)" = "true" ] && [ "$(INGRESS_GATEWAY_ROUTE_MODE)" != "header" ] && [ "$(INGRESS_GATEWAY_ROUTE_MODE)" != "uri" ]; then \
+		echo "INGRESS_GATEWAY_ROUTE_MODE must be header or uri"; \
 		exit 1; \
 	fi
 
@@ -575,6 +579,10 @@ _vscode-example: check-example-tools check-acr-vars
 			echo "vscode-example requires ENABLE_INGRESS_GATEWAY=true; redeploy with make k8s-deploy"; \
 			exit 1; \
 		fi; \
+		if [ "$(INGRESS_GATEWAY_ROUTE_MODE)" != "header" ]; then \
+			echo "vscode-example no-proxy browser access requires INGRESS_GATEWAY_ROUTE_MODE=header; redeploy with make k8s-deploy"; \
+			exit 1; \
+		fi; \
 		az acr repository show-tags --name "$(ACR_NAME)" $(AZ_SUBSCRIPTION_ARG) --repository "$(VSCODE_IMAGE_NAME)" --query "[?@=='$(VSCODE_IMAGE_TAG)'] | [0]" -o tsv | grep -Fxq "$(VSCODE_IMAGE_TAG)" || (echo "$(VSCODE_IMAGE) is not pushed; run make vscode-image-push or make images-push first"; exit 1); \
 		port_forward_log=$$(mktemp); \
 		kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" port-forward svc/opensandbox-server $(SERVER_PORT):8080 >"$$port_forward_log" 2>&1 & \
@@ -607,7 +615,7 @@ _vscode-example: check-example-tools check-acr-vars
 		python3 -m venv .venv; \
 		. .venv/bin/activate; \
 		pip install -q -r $(VSCODE_EXAMPLE_DIR)/requirements.txt; \
-		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_API_KEY="$$example_api_key" SANDBOX_IMAGE="$(VSCODE_IMAGE)" OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" CODE_PORT="$(VSCODE_PORT)" VERIFY_KATA_WITH_KUBECTL=1 python -u $(VSCODE_EXAMPLE_DIR)/main.py
+		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_API_KEY="$$example_api_key" SANDBOX_IMAGE="$(VSCODE_IMAGE)" OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" CODE_PORT="$(VSCODE_PORT)" INGRESS_GATEWAY_LOCAL_PORT="$(INGRESS_GATEWAY_LOCAL_PORT)" VSCODE_GATEWAY_DOMAIN="$(VSCODE_GATEWAY_DOMAIN)" VERIFY_KATA_WITH_KUBECTL=1 python -u $(VSCODE_EXAMPLE_DIR)/main.py
 
 status:
 	kubectl get runtimeclass

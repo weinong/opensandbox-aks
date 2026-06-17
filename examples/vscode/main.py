@@ -1,7 +1,7 @@
 import asyncio
 import inspect
 import os
-import socket
+import shlex
 import subprocess
 import urllib.error
 import urllib.request
@@ -11,6 +11,9 @@ from urllib.parse import urlparse
 from opensandbox import Sandbox
 from opensandbox.config import ConnectionConfig
 from opensandbox.models.execd import RunCommandOpts
+
+
+INGRESS_ROUTE_HEADER = "OpenSandbox-Ingress-To"
 
 
 async def print_logs(label: str, execution) -> None:
@@ -34,12 +37,6 @@ def execution_stderr(execution) -> str:
     return "".join(chunk.text for chunk in execution.logs.stderr).strip()
 
 
-def free_local_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return int(sock.getsockname()[1])
-
-
 async def get_sandbox_endpoint(sandbox: Sandbox, port: int):
     endpoint = sandbox.get_endpoint(port)
     if inspect.isawaitable(endpoint):
@@ -47,117 +44,58 @@ async def get_sandbox_endpoint(sandbox: Sandbox, port: int):
     return endpoint
 
 
-def normalize_gateway_url(endpoint) -> str:
+def endpoint_value(endpoint) -> str:
     value = getattr(endpoint, "endpoint", endpoint)
     if not isinstance(value, str) or not value:
         raise RuntimeError(f"Unexpected sandbox endpoint response: {endpoint!r}")
-    url = value if value.startswith(("http://", "https://")) else f"http://{value}"
-    return url if url.endswith("/") else f"{url}/"
+    return value
 
 
-def parse_gateway_route(gateway_url: str) -> tuple[str, int, str]:
-    parsed = urlparse(gateway_url)
-    if parsed.hostname not in {"127.0.0.1", "localhost"}:
+def endpoint_header(endpoint, name: str) -> str | None:
+    headers = getattr(endpoint, "headers", None) or {}
+    for key, value in headers.items():
+        if key.lower() == name.lower():
+            return value
+    return None
+
+
+def host_routed_gateway_url(sandbox_id: str, port: int) -> str:
+    domain = os.getenv("VSCODE_GATEWAY_DOMAIN", "127.0.0.1.nip.io").strip().strip(".")
+    if not domain or ":" in domain or "/" in domain:
         raise RuntimeError(
-            "This local example expects the gateway endpoint to be localhost, "
-            f"got: {gateway_url}"
+            "VSCODE_GATEWAY_DOMAIN must be a bare wildcard DNS suffix, "
+            "for example 127.0.0.1.nip.io"
         )
-    route_prefix = parsed.path.rstrip("/")
-    if not route_prefix:
-        raise RuntimeError(f"Gateway endpoint URL has no route prefix: {gateway_url}")
-    target_port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    return parsed.hostname, target_port, route_prefix
-
-
-def rewrite_request(data: bytes, route_prefix: str, target_host: str, target_port: int) -> bytes:
-    header_end = data.find(b"\r\n\r\n")
-    if header_end < 0:
-        return data
-
-    headers = data[:header_end].decode("iso-8859-1")
-    body = data[header_end:]
-    lines = headers.split("\r\n")
-    is_websocket = any(
-        line.lower().startswith("upgrade:") and "websocket" in line.lower()
-        for line in lines[1:]
+    gateway_port = int(os.getenv("INGRESS_GATEWAY_LOCAL_PORT", "8081"))
+    scheme = os.getenv("VSCODE_GATEWAY_SCHEME", "http").strip() or "http"
+    host = f"{sandbox_id}-{port}.{domain}"
+    port_suffix = (
+        "" if (scheme, gateway_port) in {("http", 80), ("https", 443)}
+        else f":{gateway_port}"
     )
-
-    parts = lines[0].split(" ", 2)
-    if len(parts) == 3:
-        method, path, version = parts
-        if path.startswith("/") and path != route_prefix and not path.startswith(
-            route_prefix + "/"
-        ):
-            path = route_prefix + path
-        lines[0] = f"{method} {path} {version}"
-
-    rewritten = [lines[0]]
-    has_connection = False
-    for line in lines[1:]:
-        lower = line.lower()
-        if is_websocket and lower.startswith("origin:"):
-            continue
-        if lower.startswith("host:"):
-            rewritten.append(f"Host: {target_host}:{target_port}")
-        elif lower.startswith("connection:") and not is_websocket:
-            rewritten.append("Connection: close")
-            has_connection = True
-        else:
-            rewritten.append(line)
-
-    if not is_websocket and not has_connection:
-        rewritten.append("Connection: close")
-    return "\r\n".join(rewritten).encode("iso-8859-1") + body
+    return f"{scheme}://{host}{port_suffix}/"
 
 
-async def pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-    try:
-        while data := await reader.read(65536):
-            writer.write(data)
-            await writer.drain()
-    finally:
-        writer.close()
-
-
-async def proxy_gateway_request(
-    client_reader: asyncio.StreamReader,
-    client_writer: asyncio.StreamWriter,
-    target_host: str,
-    target_port: int,
-    route_prefix: str,
-) -> None:
-    try:
-        data = await client_reader.readuntil(b"\r\n\r\n")
-        gateway_reader, gateway_writer = await asyncio.open_connection(
-            target_host, target_port
+def ensure_header_mode_endpoint(endpoint, sandbox_id: str, port: int) -> None:
+    expected_route = f"{sandbox_id}-{port}"
+    route = endpoint_header(endpoint, INGRESS_ROUTE_HEADER)
+    if route == expected_route:
+        return
+    if route:
+        raise RuntimeError(
+            f"Unexpected {INGRESS_ROUTE_HEADER} route {route!r}; expected {expected_route!r}"
         )
-        gateway_writer.write(
-            rewrite_request(data, route_prefix, target_host, target_port)
-        )
-        await gateway_writer.drain()
-        await asyncio.gather(
-            pipe(client_reader, gateway_writer),
-            pipe(gateway_reader, client_writer),
-        )
-    except Exception:
-        client_writer.close()
 
-
-async def start_gateway_route_proxy(
-    gateway_url: str, local_port: int
-) -> asyncio.AbstractServer:
-    target_host, target_port, route_prefix = parse_gateway_route(gateway_url)
-    return await asyncio.start_server(
-        lambda reader, writer: proxy_gateway_request(
-            reader, writer, target_host, target_port, route_prefix
-        ),
-        "127.0.0.1",
-        local_port,
+    raise RuntimeError(
+        "VS Code no-proxy browser access requires OpenSandbox ingress gateway "
+        f"header mode, but endpoint {endpoint_value(endpoint)!r} did not include "
+        f"{INGRESS_ROUTE_HEADER}. Redeploy with INGRESS_GATEWAY_ROUTE_MODE=header."
     )
 
 
 def request_once(url: str) -> None:
-    with urllib.request.urlopen(url, timeout=1):
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(url, timeout=1):
         pass
 
 
@@ -238,8 +176,6 @@ async def main() -> None:
     code_port = int(os.getenv("CODE_PORT", "8443"))
     keepalive_seconds = int(os.getenv("KEEPALIVE_SECONDS", "600"))
     namespace = os.getenv("OPEN_SANDBOX_NAMESPACE", "opensandbox")
-    local_code_port = int(os.getenv("VSCODE_LOCAL_PORT") or free_local_port())
-    proxy_server = None
 
     sandbox = await Sandbox.create(
         os.getenv("SANDBOX_IMAGE", "opensandbox-vscode:latest"),
@@ -257,24 +193,30 @@ async def main() -> None:
     async with sandbox:
         try:
             print(f"sandbox id: {sandbox.id}")
+            vscode_url = host_routed_gateway_url(sandbox.id, code_port)
+            trusted_origin = urlparse(vscode_url).netloc
             start_exec = await sandbox.commands.run(
                 "sh -lc "
-                f"'code-server --bind-addr 0.0.0.0:{code_port} --auth none /workspace "
-                ">/tmp/code-server.log 2>&1'",
+                + shlex.quote(
+                    f"code-server --bind-addr 0.0.0.0:{code_port} "
+                    f"--auth none --trusted-origins {trusted_origin} /workspace "
+                    ">/tmp/code-server.log 2>&1"
+                ),
                 opts=RunCommandOpts(background=True),
             )
             await print_logs("code-server", start_exec)
             await wait_for_code_server(sandbox, code_port)
             print(f"code-server ready on sandbox port {code_port}")
 
-            gateway_url = normalize_gateway_url(
-                await get_sandbox_endpoint(sandbox, code_port)
-            )
-            proxy_server = await start_gateway_route_proxy(gateway_url, local_code_port)
-            vscode_url = f"http://127.0.0.1:{local_code_port}/"
+            endpoint = await get_sandbox_endpoint(sandbox, code_port)
+            ensure_header_mode_endpoint(endpoint, sandbox.id, code_port)
             await wait_for_http(vscode_url, 30)
 
-            print(f"gateway route: {gateway_url}")
+            print(f"gateway endpoint: {endpoint_value(endpoint)}")
+            print(
+                f"gateway route header: {INGRESS_ROUTE_HEADER}: "
+                f"{endpoint_header(endpoint, INGRESS_ROUTE_HEADER)}"
+            )
             print("VS Code Web endpoint:")
             print(f"  {vscode_url}")
 
@@ -288,9 +230,6 @@ async def main() -> None:
             print("Stopping VS Code sandbox")
             raise
         finally:
-            if proxy_server:
-                proxy_server.close()
-                await proxy_server.wait_closed()
             await sandbox.kill()
             print(f"sandbox killed: {sandbox.id}")
 

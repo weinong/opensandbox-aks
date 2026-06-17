@@ -27,17 +27,19 @@ VSCODE_IMAGE_NAME=opensandbox-vscode
 VSCODE_IMAGE_TAG=latest
 VSCODE_PORT=8443
 ENABLE_INGRESS_GATEWAY=true
+INGRESS_GATEWAY_ROUTE_MODE=header
+VSCODE_GATEWAY_DOMAIN=127.0.0.1.nip.io
 ```
 
 The image installs pinned `code-server` release `4.124.2` from the upstream `.deb` package and verifies the package SHA-256 during build.
 
 `make vscode-example` does not rebuild or push the container image. Re-run `make vscode-image-push` after changing `examples/vscode/Dockerfile` or related image contents, and use a unique `VSCODE_IMAGE_TAG` when you need to avoid reusing a stale mutable tag such as `latest`.
 
-The printed VS Code URL uses the shared OpenSandbox ingress gateway because VS Code Web requires browser HTTP and WebSocket traffic. The launcher waits for `code-server` to answer inside the sandbox before opening the local route proxy.
+The printed VS Code URL uses the shared OpenSandbox ingress gateway because VS Code Web requires browser HTTP and WebSocket traffic. The launcher waits for `code-server` to answer inside the sandbox, then prints a host-routed gateway URL.
 
-The example starts `code-server` with `--auth none` and binds browser access to `127.0.0.1` through local port-forwarding/proxying. Treat it as a disposable single-user development example; do not expose the printed URL or raw gateway port on a shared network.
+The example starts `code-server` with `--auth none` and binds browser access to `127.0.0.1` through local port-forwarding. Treat it as a disposable single-user development example; do not expose the printed URL or raw gateway port on a shared network.
 
-`make k8s-deploy` deploys the shared OpenSandbox ingress gateway by default and configures the lifecycle server for gateway URI routing:
+`make k8s-deploy` deploys the shared OpenSandbox ingress gateway by default and configures the lifecycle server for gateway header routing:
 
 ```bash
 make k8s-deploy
@@ -45,13 +47,17 @@ make vscode-image-push
 make vscode-example
 ```
 
-`make vscode-example` port-forwards the single shared `opensandbox-ingress-gateway` service on `INGRESS_GATEWAY_LOCAL_PORT` and prints a local browser URL such as `http://127.0.0.1:<local-port>/`. The example keeps a lightweight local route proxy that prefixes browser HTTP and WebSocket requests with the gateway route before sending them to the shared gateway. This keeps `code-server` mounted at `/`, which is required for its root-relative workbench assets.
+`make vscode-example` port-forwards the single shared `opensandbox-ingress-gateway` service on `INGRESS_GATEWAY_LOCAL_PORT` and prints a browser URL such as `http://<sandbox-id>-8443.127.0.0.1.nip.io:8081/`. The browser sends that host in the normal `Host` header, and the gateway uses it to route directly to the sandbox while preserving the request path as `/`. This keeps `code-server` mounted at `/`, which is required for its root-relative workbench assets, without a local path-rewriting proxy.
 
-Open the printed `VS Code Web endpoint`, not the raw gateway port. The raw gateway port, for example `http://127.0.0.1:8081/`, expects paths in the form `/<sandbox-id>/<port>/...` and returns `OpenSandbox Ingress: invalid ingress route` for `/`.
+Open the printed `VS Code Web endpoint`, not the raw gateway port. The raw gateway port, for example `http://127.0.0.1:8081/`, has no sandbox route in its host and returns `OpenSandbox Ingress: invalid ingress route` for `/`.
 
-If you previously opened a VS Code endpoint before updating this example, stop the old `make vscode-example` process and start a fresh one. The local route proxy is created per run, so already-running proxy processes do not pick up code changes.
+If you previously deployed with URI routing, redeploy before running this example:
 
-If you explicitly disable the gateway with `ENABLE_INGRESS_GATEWAY=false`, `make vscode-example` will fail early. Redeploy with `make k8s-deploy` before running this example.
+```bash
+INGRESS_GATEWAY_ROUTE_MODE=header make k8s-deploy
+```
+
+If you explicitly disable the gateway with `ENABLE_INGRESS_GATEWAY=false`, or deploy it with a route mode other than `header`, `make vscode-example` will fail early. Redeploy with `make k8s-deploy` before running this example.
 
 ## How It Works
 
@@ -66,7 +72,7 @@ The `<sandbox-id>-0` pod is the actual OpenSandbox workload. It is created by th
 Traffic flow:
 
 ```text
-browser -> 127.0.0.1:<local-port>/ -> local route proxy -> 127.0.0.1:<gateway-local-port>/<sandbox-id>/8443/ -> kubectl port-forward -> opensandbox-ingress-gateway -> <sandbox-endpoint-ip>:8443 -> code-server in <sandbox-id>-0
+browser -> <sandbox-id>-8443.127.0.0.1.nip.io:<gateway-local-port>/ -> kubectl port-forward -> opensandbox-ingress-gateway -> <sandbox-endpoint-ip>:8443 -> code-server in <sandbox-id>-0
 ```
 
 Example resources are cleaned up when the script exits normally or when you press `Ctrl+C`. If the process is interrupted abruptly, clean up with:
@@ -81,10 +87,10 @@ The example keeps the sandbox alive for 10 minutes. Override that duration when 
 KEEPALIVE_SECONDS=1800 make vscode-example
 ```
 
-Use a fixed local browser port when needed:
+Use a fixed local gateway port when needed:
 
 ```bash
-VSCODE_LOCAL_PORT=18443 make vscode-example
+INGRESS_GATEWAY_LOCAL_PORT=18443 make vscode-example
 ```
 
 Press `Ctrl+C` to stop early. The script kills the sandbox on exit.
@@ -121,8 +127,9 @@ In another terminal, load the API key and run the example:
 export OPEN_SANDBOX_API_KEY=$(kubectl -n opensandbox get secret opensandbox-server -o jsonpath='{.data.api-key}' | base64 -d)
 OPEN_SANDBOX_DOMAIN=localhost:8080 \
 SANDBOX_IMAGE=<acr-name>.azurecr.io/opensandbox-vscode:latest \
+INGRESS_GATEWAY_LOCAL_PORT=8081 \
 VERIFY_KATA_WITH_KUBECTL=1 \
 python examples/vscode/main.py
 ```
 
-Open the printed `http://127.0.0.1:<port>/` URL in a browser to use VS Code Web inside the sandbox. Keep the script running while using the browser; stopping it terminates both the local port-forward and the sandbox.
+Open the printed `http://<sandbox-id>-8443.127.0.0.1.nip.io:8081/` URL in a browser to use VS Code Web inside the sandbox. Keep the script running while using the browser; stopping it terminates both the local port-forward and the sandbox.
