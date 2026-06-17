@@ -6,7 +6,7 @@ This deployment packages the upstream OpenSandbox lifecycle server for AKS and c
 
 - OpenSandbox Kubernetes controller, installed from the upstream Helm chart.
 - OpenSandbox lifecycle server, built from `Dockerfile`.
-- Optional OpenSandbox ingress gateway for browser/WebSocket sandbox endpoints.
+- OpenSandbox ingress gateway for browser/WebSocket sandbox endpoints.
 - Kubernetes manifests and server configuration for the lifecycle server.
 
 The Makefile installs controller chart `0.2.0` so BatchSandbox pause/resume is available. Pause/resume depends on the `SandboxSnapshot` CRD and `BatchSandbox.spec.pause`; older controller releases do not provide those fields.
@@ -48,10 +48,10 @@ Deploy from the repository root with `make k8s-deploy`, or run the full workflow
 
 ## Ingress Gateway
 
-By default, `config/sandbox.toml` renders `[ingress] mode = "direct"`, matching the minimal lifecycle server deployment. Enable the shared OpenSandbox ingress gateway when examples need browser-friendly HTTP/WebSocket endpoints without creating per-sandbox helper pods:
+By default, `config/sandbox.toml` renders gateway ingress settings so examples can use browser-friendly HTTP/WebSocket endpoints:
 
 ```bash
-make k8s-deploy ENABLE_INGRESS_GATEWAY=true
+make k8s-deploy
 ```
 
 The Makefile then renders:
@@ -63,4 +63,4 @@ gateway.address = "127.0.0.1:8081"
 gateway.route.mode = "uri"
 ```
 
-It also deploys `k8s/opensandbox-ingress-gateway.yaml`. For local examples, `make vscode-example ENABLE_INGRESS_GATEWAY=true` port-forwards `svc/opensandbox-ingress-gateway` to `INGRESS_GATEWAY_LOCAL_PORT`, which defaults to `8081`.
+It also deploys `k8s/opensandbox-ingress-gateway.yaml`. For local examples, `make vscode-example` port-forwards `svc/opensandbox-ingress-gateway` to `INGRESS_GATEWAY_LOCAL_PORT`, which defaults to `8081`.

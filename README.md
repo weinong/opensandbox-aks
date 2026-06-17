@@ -93,11 +93,11 @@ Bicep and mutate node host files to install Kata's Firecracker shim plus
 devmapper snapshotter configuration. See `deploy/firecracker-runtime/README.md`
 before running them.
 
-The VS Code Web example uses a temporary per-sandbox helper proxy pod by default. To avoid that extra pod, redeploy the OpenSandbox server with the shared ingress gateway and run the example with the same flag:
+The VS Code Web example uses the shared OpenSandbox ingress gateway, which `make k8s-deploy` enables by default. Run it after the deployment is healthy:
 
 ```bash
-make k8s-deploy ENABLE_INGRESS_GATEWAY=true
-make vscode-example ENABLE_INGRESS_GATEWAY=true
+make k8s-deploy
+make vscode-example
 ```
 
 Kubernetes cleanup targets require explicit confirmation to avoid deleting the wrong environment. `infra-delete` deletes the configured resource group without `CONFIRM_*`, but still rejects exported environment identities and verifies the current Azure subscription matches `SUBSCRIPTION_ID`.

@@ -13,7 +13,7 @@ It is adapted from the upstream OpenSandbox [`examples/vscode`](https://github.c
 
 ## Automated Run
 
-Build and push the VS Code sandbox image, port-forward the OpenSandbox server, create a sandbox, start `code-server`, create a helper proxy pod, and print the browser URL:
+Build and push the VS Code sandbox image, port-forward the OpenSandbox server and shared ingress gateway, create a sandbox, start `code-server`, and print the browser URL:
 
 ```bash
 make vscode-example
@@ -25,50 +25,41 @@ The target uses these defaults:
 VSCODE_IMAGE_NAME=opensandbox-vscode
 VSCODE_IMAGE_TAG=latest
 VSCODE_PORT=8443
-ENABLE_INGRESS_GATEWAY=false
+ENABLE_INGRESS_GATEWAY=true
 ```
 
 The image installs pinned `code-server` release `4.124.2` from the upstream `.deb` package and verifies the package SHA-256 during build.
 
-The printed VS Code URL uses a local `kubectl port-forward` to a short-lived helper proxy pod that forwards traffic to the sandbox endpoint IP. This bypasses the OpenSandbox lifecycle server endpoint proxy for browser traffic because VS Code Web requires WebSocket upgrade support. The launcher waits for `code-server` to answer inside the sandbox before opening the local port-forward.
+The printed VS Code URL uses the shared OpenSandbox ingress gateway because VS Code Web requires browser HTTP and WebSocket traffic. The launcher waits for `code-server` to answer inside the sandbox before opening the local route proxy.
 
 The example starts `code-server` with `--auth none` and binds browser access to `127.0.0.1` through local port-forwarding/proxying. Treat it as a disposable single-user development example; do not expose the printed URL or raw gateway port on a shared network.
 
-To avoid the per-sandbox helper proxy pod, deploy the shared OpenSandbox ingress gateway and run the example through gateway URI routing:
+`make k8s-deploy` deploys the shared OpenSandbox ingress gateway by default and configures the lifecycle server for gateway URI routing:
 
 ```bash
-make k8s-deploy ENABLE_INGRESS_GATEWAY=true
-make vscode-example ENABLE_INGRESS_GATEWAY=true
+make k8s-deploy
+make vscode-example
 ```
 
-With gateway mode enabled, `make vscode-example` port-forwards the single shared `opensandbox-ingress-gateway` service on `INGRESS_GATEWAY_LOCAL_PORT` and prints a local browser URL such as `http://127.0.0.1:<local-port>/`. The example keeps a lightweight local route proxy process that prefixes browser HTTP and WebSocket requests with the gateway route before sending them to the shared gateway. This avoids a per-sandbox Kubernetes helper pod and keeps `code-server` mounted at `/`, which is required for its root-relative workbench assets.
+`make vscode-example` port-forwards the single shared `opensandbox-ingress-gateway` service on `INGRESS_GATEWAY_LOCAL_PORT` and prints a local browser URL such as `http://127.0.0.1:<local-port>/`. The example keeps a lightweight local route proxy that prefixes browser HTTP and WebSocket requests with the gateway route before sending them to the shared gateway. This keeps `code-server` mounted at `/`, which is required for its root-relative workbench assets.
 
 Open the printed `VS Code Web endpoint`, not the raw gateway port. The raw gateway port, for example `http://127.0.0.1:8081/`, expects paths in the form `/<sandbox-id>/<port>/...` and returns `OpenSandbox Ingress: invalid ingress route` for `/`.
 
 If you previously opened a VS Code endpoint before updating this example, stop the old `make vscode-example` process and start a fresh one. The local route proxy is created per run, so already-running proxy processes do not pick up code changes.
 
-If the cluster is already deployed with `[ingress] mode = "gateway"`, `make vscode-example` detects that server config and uses gateway access automatically. This avoids accidentally running SDK readiness checks through lifecycle server proxy mode against a gateway-configured server.
+If you explicitly disable the gateway with `ENABLE_INGRESS_GATEWAY=false`, `make vscode-example` will fail early. Redeploy with `make k8s-deploy` before running this example.
 
 ## How It Works
 
-In the default helper-proxy mode, `kubectl -n opensandbox get pods` should show two example-related pods:
+`kubectl -n opensandbox get pods` should show the sandbox workload pod:
 
 ```text
 <sandbox-id>-0              1/1     Running
-vscode-proxy-<sandbox-id>   1/1     Running
 ```
 
 The `<sandbox-id>-0` pod is the actual OpenSandbox workload. It is created by the OpenSandbox controller from the `BatchSandbox` resource, runs the VS Code image, and uses the `kata-optimized` RuntimeClass. `code-server` runs in this sandbox on port `8443`.
 
-The `vscode-proxy-<sandbox-id>` pod is not another sandbox. It is a temporary helper pod created by `examples/vscode/main.py` so local browser traffic can reach VS Code reliably. Kubernetes `kubectl port-forward pod/<kata-pod>` connects to `127.0.0.1:<port>` inside the pod network namespace, but the OpenSandbox/Kata endpoint for browser traffic is exposed through the sandbox endpoint IP annotation. The helper pod listens on `8443`, forwards raw TCP to that sandbox endpoint IP, and then the script runs local `kubectl port-forward` to the helper pod.
-
 Traffic flow:
-
-```text
-browser -> 127.0.0.1:<local-port> -> kubectl port-forward -> vscode-proxy-<sandbox-id>:8443 -> <sandbox-endpoint-ip>:8443 -> code-server in <sandbox-id>-0
-```
-
-In gateway mode, the shared gateway replaces the per-sandbox proxy pod:
 
 ```text
 browser -> 127.0.0.1:<local-port>/ -> local route proxy -> 127.0.0.1:<gateway-local-port>/<sandbox-id>/8443/ -> kubectl port-forward -> opensandbox-ingress-gateway -> <sandbox-endpoint-ip>:8443 -> code-server in <sandbox-id>-0
@@ -77,7 +68,6 @@ browser -> 127.0.0.1:<local-port>/ -> local route proxy -> 127.0.0.1:<gateway-lo
 Example resources are cleaned up when the script exits normally or when you press `Ctrl+C`. If the process is interrupted abruptly, clean up with:
 
 ```bash
-kubectl delete pod -n opensandbox -l app.kubernetes.io/name=opensandbox-vscode-proxy
 kubectl delete batchsandbox -n opensandbox <sandbox-id>
 ```
 
@@ -111,10 +101,14 @@ python3 -m venv .venv
 pip install -r examples/vscode/requirements.txt
 ```
 
-Port-forward the OpenSandbox server:
+Port-forward the OpenSandbox server and ingress gateway in separate terminals:
 
 ```bash
 kubectl -n opensandbox port-forward svc/opensandbox-server 8080:8080
+```
+
+```bash
+kubectl -n opensandbox port-forward svc/opensandbox-ingress-gateway 8081:80
 ```
 
 In another terminal, load the API key and run the example:
@@ -128,17 +122,3 @@ python examples/vscode/main.py
 ```
 
 Open the printed `http://127.0.0.1:<port>/` URL in a browser to use VS Code Web inside the sandbox. Keep the script running while using the browser; stopping it terminates both the local port-forward and the sandbox.
-
-For gateway mode in the step-by-step flow, also port-forward the gateway service and set `VSCODE_ACCESS_MODE=gateway`:
-
-```bash
-kubectl -n opensandbox port-forward svc/opensandbox-ingress-gateway 8081:80
-```
-
-```bash
-OPEN_SANDBOX_DOMAIN=localhost:8080 \
-SANDBOX_IMAGE=<acr-name>.azurecr.io/opensandbox-vscode:latest \
-VSCODE_ACCESS_MODE=gateway \
-VERIFY_KATA_WITH_KUBECTL=1 \
-python examples/vscode/main.py
-```

@@ -52,7 +52,7 @@ OPEN_SANDBOX_SNAPSHOT_REGISTRY ?= $(ACR_LOGIN_SERVER)/opensandbox-snapshots
 OPEN_SANDBOX_SNAPSHOT_REGISTRY_INSECURE ?= false
 OPEN_SANDBOX_SNAPSHOT_SECRET ?= opensandbox-snapshot-registry
 OPEN_SANDBOX_IMAGE_COMMITTER_IMAGE ?= opensandbox/image-committer:v0.1.0
-ENABLE_INGRESS_GATEWAY ?= false
+ENABLE_INGRESS_GATEWAY ?= true
 INGRESS_GATEWAY_IMAGE ?= sandbox-registry.cn-zhangjiakou.cr.aliyuncs.com/opensandbox/ingress:v1.0.7
 INGRESS_GATEWAY_ROUTE_MODE ?= uri
 INGRESS_GATEWAY_LOCAL_PORT ?= 8081
@@ -220,7 +220,7 @@ local-config:
 		remove_generated_default '^(export[[:space:]]+)?OPEN_SANDBOX_SNAPSHOT_REGISTRY_INSECURE[[:space:]]*\?=[[:space:]]*false$$'; \
 		remove_generated_default '^(export[[:space:]]+)?OPEN_SANDBOX_SNAPSHOT_SECRET[[:space:]]*\?=[[:space:]]*opensandbox-snapshot-registry$$'; \
 		remove_generated_default '^(export[[:space:]]+)?OPEN_SANDBOX_IMAGE_COMMITTER_IMAGE[[:space:]]*\?=[[:space:]]*opensandbox/image-committer:v0\.1\.0$$'; \
-		remove_generated_default '^(export[[:space:]]+)?ENABLE_INGRESS_GATEWAY[[:space:]]*\?=[[:space:]]*false$$'; \
+		remove_generated_default '^(export[[:space:]]+)?ENABLE_INGRESS_GATEWAY[[:space:]]*\?=[[:space:]]*(false|true)$$'; \
 		remove_generated_default '^(export[[:space:]]+)?INGRESS_GATEWAY_IMAGE[[:space:]]*\?=[[:space:]]*sandbox-registry\.cn-zhangjiakou\.cr\.aliyuncs\.com/opensandbox/ingress:v1\.0\.7$$'; \
 		remove_generated_default '^(export[[:space:]]+)?INGRESS_GATEWAY_ROUTE_MODE[[:space:]]*\?=[[:space:]]*uri$$'; \
 		remove_generated_default '^(export[[:space:]]+)?INGRESS_GATEWAY_LOCAL_PORT[[:space:]]*\?=[[:space:]]*8081$$'; \
@@ -564,6 +564,10 @@ _vscode-image-push: check-acr-vars _vscode-image-build
 
 _vscode-example: check-example-tools _vscode-image-push
 	@set -euo pipefail; \
+		if [ "$(ENABLE_INGRESS_GATEWAY)" != "true" ]; then \
+			echo "vscode-example requires ENABLE_INGRESS_GATEWAY=true; redeploy with make k8s-deploy"; \
+			exit 1; \
+		fi; \
 		port_forward_log=$$(mktemp); \
 		kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" port-forward svc/opensandbox-server $(SERVER_PORT):8080 >"$$port_forward_log" 2>&1 & \
 		port_forward_pid=$$!; \
@@ -579,33 +583,23 @@ _vscode-example: check-example-tools _vscode-image-push
 		kill -0 $$port_forward_pid >/dev/null 2>&1 || (cat "$$port_forward_log"; exit 1); \
 		health=$$(curl -fsS http://localhost:$(SERVER_PORT)/health); \
 		HEALTH="$$health" python3 -c 'import json, os, sys; sys.exit(0 if json.loads(os.environ["HEALTH"]).get("status") == "healthy" else 1)' || (echo "Unexpected opensandbox-server health response: $$health"; exit 1); \
-		deployed_ingress_mode=$$(kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" get configmap opensandbox-server-config -o jsonpath='{.data.sandbox\.toml}' 2>/dev/null | python3 -c 'import re, sys; text = sys.stdin.read(); section = text.split("[ingress]", 1)[1] if "[ingress]" in text else ""; match = re.search(r"(?m)^\s*mode\s*=\s*\"([^\"]+)\"", section); print(match.group(1) if match else "")' || true); \
-		vscode_access_mode="$(if $(filter true,$(ENABLE_INGRESS_GATEWAY)),gateway,helper-proxy)"; \
-		if [ "$$deployed_ingress_mode" = "gateway" ]; then \
-			vscode_access_mode="gateway"; \
-			if [ "$(ENABLE_INGRESS_GATEWAY)" != "true" ]; then \
-				echo "Detected deployed opensandbox-server gateway ingress; using VSCODE_ACCESS_MODE=gateway"; \
-			fi; \
-		fi; \
-		if [ "$$vscode_access_mode" = "gateway" ]; then \
-			gateway_port_forward_log=$$(mktemp); \
-			kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" port-forward svc/opensandbox-ingress-gateway $(INGRESS_GATEWAY_LOCAL_PORT):80 >"$$gateway_port_forward_log" 2>&1 & \
-			gateway_port_forward_pid=$$!; \
-			for i in {1..30}; do \
-				kill -0 $$gateway_port_forward_pid >/dev/null 2>&1 || (cat "$$gateway_port_forward_log"; exit 1); \
-				curl -fsS http://127.0.0.1:$(INGRESS_GATEWAY_LOCAL_PORT)/status.ok >/dev/null 2>&1 && break; \
-				sleep 1; \
-			done; \
+		gateway_port_forward_log=$$(mktemp); \
+		kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" port-forward svc/opensandbox-ingress-gateway $(INGRESS_GATEWAY_LOCAL_PORT):80 >"$$gateway_port_forward_log" 2>&1 & \
+		gateway_port_forward_pid=$$!; \
+		for i in {1..30}; do \
 			kill -0 $$gateway_port_forward_pid >/dev/null 2>&1 || (cat "$$gateway_port_forward_log"; exit 1); \
-			curl -fsS http://127.0.0.1:$(INGRESS_GATEWAY_LOCAL_PORT)/status.ok >/dev/null; \
-		fi; \
+			curl -fsS http://127.0.0.1:$(INGRESS_GATEWAY_LOCAL_PORT)/status.ok >/dev/null 2>&1 && break; \
+			sleep 1; \
+		done; \
+		kill -0 $$gateway_port_forward_pid >/dev/null 2>&1 || (cat "$$gateway_port_forward_log"; exit 1); \
+		curl -fsS http://127.0.0.1:$(INGRESS_GATEWAY_LOCAL_PORT)/status.ok >/dev/null; \
 		example_api_key=$$(kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" get secret opensandbox-server -o jsonpath='{.data.api-key}' 2>/dev/null | base64 -d 2>/dev/null || true); \
 		example_api_key="$${example_api_key:-$${OPEN_SANDBOX_API_KEY:-}}"; \
 		test -n "$$example_api_key" || (echo "OPEN_SANDBOX_API_KEY is required, or deploy opensandbox-server with make k8s-deploy first"; exit 1); \
 		python3 -m venv .venv; \
 		. .venv/bin/activate; \
 		pip install -q -r $(VSCODE_EXAMPLE_DIR)/requirements.txt; \
-		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_API_KEY="$$example_api_key" SANDBOX_IMAGE="$(VSCODE_IMAGE)" OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" CODE_PORT="$(VSCODE_PORT)" VERIFY_KATA_WITH_KUBECTL=1 VSCODE_ACCESS_MODE="$$vscode_access_mode" python -u $(VSCODE_EXAMPLE_DIR)/main.py
+		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_API_KEY="$$example_api_key" SANDBOX_IMAGE="$(VSCODE_IMAGE)" OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" CODE_PORT="$(VSCODE_PORT)" VERIFY_KATA_WITH_KUBECTL=1 python -u $(VSCODE_EXAMPLE_DIR)/main.py
 
 status:
 	kubectl get runtimeclass
