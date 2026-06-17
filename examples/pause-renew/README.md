@@ -13,16 +13,15 @@ Pause/resume preserves root filesystem changes, not process memory. The example 
 - The AKS OpenSandbox server is already deployed with `make k8s-deploy` from the repository root.
 - The OpenSandbox controller is installed with pause/resume support from `make controller-install`.
 - `kubectl` points at the AKS cluster.
-- `python3` is available.
+- `uv` is available.
 
 ## Run
 
 Install dependencies:
 
 ```bash
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -r examples/pause-renew/requirements.txt
+uv venv --allow-existing .venv
+uv pip install --python .venv -r examples/pause-renew/requirements.txt
 ```
 
 Port-forward the OpenSandbox server:
@@ -35,7 +34,7 @@ In another terminal, load the API key and run the example:
 
 ```bash
 export OPEN_SANDBOX_API_KEY=$(kubectl -n opensandbox get secret opensandbox-server -o jsonpath='{.data.api-key}' | base64 -d)
-OPEN_SANDBOX_DOMAIN=localhost:8080 VERIFY_WITH_KUBECTL=1 python examples/pause-renew/app.py
+OPEN_SANDBOX_DOMAIN=localhost:8080 VERIFY_WITH_KUBECTL=1 uv run --no-project --python .venv/bin/python python examples/pause-renew/app.py
 ```
 
 Expected output includes:

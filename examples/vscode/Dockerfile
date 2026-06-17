@@ -10,7 +10,6 @@ RUN apt-get update \
         curl \
         git \
         python3 \
-        python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSLo /tmp/code-server.deb \

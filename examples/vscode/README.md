@@ -9,7 +9,7 @@ It is adapted from the upstream OpenSandbox [`examples/vscode`](https://github.c
 - The AKS OpenSandbox server is already deployed with `make k8s-deploy` from the repository root.
 - Container images are prepared with the repository image targets. Run `make vscode-image-push` for this example image, or `make images-push` to build and push all repository images.
 - `kubectl` points at the AKS cluster.
-- `docker`, `az`, `python3`, and `curl` are available locally.
+- `docker`, `az`, `uv`, and `curl` are available locally.
 - The configured ACR is reachable by the OpenSandbox workload pods. The default managed identity `AcrPull` path from this repo handles that for images pushed to `$(ACR_NAME).azurecr.io`.
 
 ## Automated Run
@@ -106,9 +106,8 @@ make vscode-image-push
 Install the SDK into the repository virtual environment:
 
 ```bash
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -r examples/vscode/requirements.txt
+uv venv --allow-existing .venv
+uv pip install --python .venv -r examples/vscode/requirements.txt
 ```
 
 Port-forward the OpenSandbox server and ingress gateway in separate terminals:
@@ -129,7 +128,7 @@ OPEN_SANDBOX_DOMAIN=localhost:8080 \
 SANDBOX_IMAGE=<acr-name>.azurecr.io/opensandbox-vscode:latest \
 INGRESS_GATEWAY_LOCAL_PORT=8081 \
 VERIFY_KATA_WITH_KUBECTL=1 \
-python examples/vscode/main.py
+uv run --no-project --python .venv/bin/python python examples/vscode/main.py
 ```
 
 Open the printed `http://<sandbox-id>-8443.127.0.0.1.nip.io:8081/` URL in a browser to use VS Code Web inside the sandbox. Keep the script running while using the browser; stopping it terminates both the local port-forward and the sandbox.

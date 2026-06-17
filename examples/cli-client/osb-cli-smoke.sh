@@ -2,6 +2,8 @@
 set -euo pipefail
 
 OSB_BIN="${OSB_BIN:-osb}"
+UV="${UV:-uv}"
+UV_PYTHON="${UV_PYTHON:-.venv/bin/python}"
 OPEN_SANDBOX_DOMAIN="${OPEN_SANDBOX_DOMAIN:-localhost:8080}"
 OPEN_SANDBOX_PROTOCOL="${OPEN_SANDBOX_PROTOCOL:-http}"
 SANDBOX_IMAGE="${SANDBOX_IMAGE:-python:3.12-slim}"
@@ -13,6 +15,11 @@ if [ -z "${OPEN_SANDBOX_API_KEY:-}" ]; then
 fi
 
 osb_base=(
+  "$UV"
+  run
+  --no-project
+  --python
+  "$UV_PYTHON"
   "$OSB_BIN"
   --no-color
   --domain "$OPEN_SANDBOX_DOMAIN"
@@ -36,7 +43,7 @@ create_json=$("${osb_base[@]}" sandbox create \
   --resource memory=512Mi \
   -o json)
 
-sandbox_id=$(printf '%s' "$create_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+sandbox_id=$(printf '%s' "$create_json" | "$UV" run --no-project --python "$UV_PYTHON" python -c 'import json,sys; print(json.load(sys.stdin)["id"])')
 printf 'sandbox id: %s\n' "$sandbox_id"
 
 "${osb_base[@]}" sandbox get "$sandbox_id" -o json >/dev/null
