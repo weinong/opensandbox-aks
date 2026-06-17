@@ -66,6 +66,7 @@ VSCODE_IMAGE_NAME ?= opensandbox-vscode
 VSCODE_IMAGE_TAG ?= latest
 SERVER_PORT ?= 8080
 VSCODE_PORT ?= 8443
+UV ?= uv
 
 SERVER_DEPLOY_DIR := deploy/opensandbox-server
 PYTHON_CLIENT_DIR := examples/python-client
@@ -315,12 +316,12 @@ check-tools:
 	@command -v kubectl >/dev/null || (echo "kubectl is required"; exit 1)
 	@command -v helm >/dev/null || (echo "helm is required"; exit 1)
 	@command -v docker >/dev/null || (echo "docker is required"; exit 1)
-	@command -v python3 >/dev/null || (echo "python3 is required"; exit 1)
+	@command -v $(UV) >/dev/null || (echo "$(UV) is required"; exit 1)
 	@command -v curl >/dev/null || (echo "curl is required"; exit 1)
 
 check-example-tools:
 	@command -v kubectl >/dev/null || (echo "kubectl is required"; exit 1)
-	@command -v python3 >/dev/null || (echo "python3 is required"; exit 1)
+	@command -v $(UV) >/dev/null || (echo "$(UV) is required"; exit 1)
 	@command -v curl >/dev/null || (echo "curl is required"; exit 1)
 
 check-acr-vars:
@@ -427,7 +428,7 @@ _k8s-deploy: check-acr-vars check-api-key check-ingress-gateway _image-push
 			set -euo pipefail; \
 			password=$$(az acr credential show --name "$(ACR_NAME)" $(AZ_SUBSCRIPTION_ARG) --query 'passwords[0].value' -o tsv); \
 			test -n "$$password"; \
-			printf '%s' "$$password" | REGISTRY="$(ACR_LOGIN_SERVER)" USERNAME="$(ACR_NAME)" NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" SECRET_NAME="$(OPEN_SANDBOX_SNAPSHOT_SECRET)" python3 -c 'import base64,json,os,sys; u=os.environ["USERNAME"]; p=sys.stdin.read(); r=os.environ["REGISTRY"]; ns=os.environ["NAMESPACE"]; name=os.environ["SECRET_NAME"]; auth=base64.b64encode(f"{u}:{p}".encode()).decode(); cfg={"auths":{r:{"username":u,"password":p,"auth":auth}}}; data=base64.b64encode(json.dumps(cfg,separators=(",",":")).encode()).decode(); print(f"apiVersion: v1\nkind: Secret\nmetadata:\n  name: {name}\n  namespace: {ns}\ntype: kubernetes.io/dockerconfigjson\ndata:\n  .dockerconfigjson: {data}\n")' | kubectl apply -f -; \
+			printf '%s' "$$password" | REGISTRY="$(ACR_LOGIN_SERVER)" USERNAME="$(ACR_NAME)" NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" SECRET_NAME="$(OPEN_SANDBOX_SNAPSHOT_SECRET)" $(UV) run --no-project python -c 'import base64,json,os,sys; u=os.environ["USERNAME"]; p=sys.stdin.read(); r=os.environ["REGISTRY"]; ns=os.environ["NAMESPACE"]; name=os.environ["SECRET_NAME"]; auth=base64.b64encode(f"{u}:{p}".encode()).decode(); cfg={"auths":{r:{"username":u,"password":p,"auth":auth}}}; data=base64.b64encode(json.dumps(cfg,separators=(",",":")).encode()).decode(); print(f"apiVersion: v1\nkind: Secret\nmetadata:\n  name: {name}\n  namespace: {ns}\ntype: kubernetes.io/dockerconfigjson\ndata:\n  .dockerconfigjson: {data}\n")' | kubectl apply -f -; \
 		else \
 			secret_type=$$(kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" get secret "$(OPEN_SANDBOX_SNAPSHOT_SECRET)" -o jsonpath='{.type}' 2>/dev/null || true); \
 			test "$$secret_type" = "kubernetes.io/dockerconfigjson" || (echo "Pause/resume snapshot registry $(OPEN_SANDBOX_SNAPSHOT_REGISTRY) requires a kubernetes.io/dockerconfigjson secret $(OPEN_SANDBOX_SNAPSHOT_SECRET) in namespace $(OPEN_SANDBOX_NAMESPACE), or set ACR_ADMIN_USER_ENABLED=true with OPEN_SANDBOX_SNAPSHOT_REGISTRY under $(ACR_LOGIN_SERVER)/"; exit 1); \
@@ -438,7 +439,7 @@ _k8s-deploy: check-acr-vars check-api-key check-ingress-gateway _image-push
 		password=$$(az acr credential show --name "$(ACR_NAME)" $(AZ_SUBSCRIPTION_ARG) --query 'passwords[0].value' -o tsv); \
 		test -n "$$password"; \
 		kubectl delete secret acr-pull -n "$(OPEN_SANDBOX_NAMESPACE)" --ignore-not-found; \
-		printf '%s' "$$password" | REGISTRY="$(ACR_LOGIN_SERVER)" USERNAME="$(ACR_NAME)" NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" python3 -c 'import base64,json,os,sys; u=os.environ["USERNAME"]; p=sys.stdin.read(); r=os.environ["REGISTRY"]; ns=os.environ["NAMESPACE"]; auth=base64.b64encode(f"{u}:{p}".encode()).decode(); cfg={"auths":{r:{"username":u,"password":p,"auth":auth}}}; data=base64.b64encode(json.dumps(cfg,separators=(",",":")).encode()).decode(); print(f"apiVersion: v1\nkind: Secret\nmetadata:\n  name: acr-pull\n  namespace: {ns}\ntype: kubernetes.io/dockerconfigjson\ndata:\n  .dockerconfigjson: {data}\n")' | kubectl create -f -; \
+		printf '%s' "$$password" | REGISTRY="$(ACR_LOGIN_SERVER)" USERNAME="$(ACR_NAME)" NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" $(UV) run --no-project python -c 'import base64,json,os,sys; u=os.environ["USERNAME"]; p=sys.stdin.read(); r=os.environ["REGISTRY"]; ns=os.environ["NAMESPACE"]; auth=base64.b64encode(f"{u}:{p}".encode()).decode(); cfg={"auths":{r:{"username":u,"password":p,"auth":auth}}}; data=base64.b64encode(json.dumps(cfg,separators=(",",":")).encode()).decode(); print(f"apiVersion: v1\nkind: Secret\nmetadata:\n  name: acr-pull\n  namespace: {ns}\ntype: kubernetes.io/dockerconfigjson\ndata:\n  .dockerconfigjson: {data}\n")' | kubectl create -f -; \
 		kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" patch serviceaccount opensandbox-server \
 			--type merge \
 			--patch '{"imagePullSecrets":[{"name":"acr-pull"}]}'; \
@@ -482,10 +483,9 @@ _python-client-example: check-example-tools
 		example_api_key=$$(kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" get secret opensandbox-server -o jsonpath='{.data.api-key}' 2>/dev/null | base64 -d 2>/dev/null || true); \
 		example_api_key="$${example_api_key:-$${OPEN_SANDBOX_API_KEY}}"; \
 		test -n "$$example_api_key" || (echo "OPEN_SANDBOX_API_KEY is required, or deploy opensandbox-server with make k8s-deploy first"; exit 1); \
-		python3 -m venv .venv; \
-		. .venv/bin/activate; \
-		pip install -q -r $(PYTHON_CLIENT_DIR)/requirements.txt; \
-		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_API_KEY="$$example_api_key" SANDBOX_IMAGE="$(SANDBOX_IMAGE)" VERIFY_KATA_WITH_KUBECTL=1 OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" python $(PYTHON_CLIENT_DIR)/app.py
+		$(UV) venv --allow-existing .venv; \
+		$(UV) pip install -q --python .venv -r $(PYTHON_CLIENT_DIR)/requirements.txt; \
+		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_API_KEY="$$example_api_key" SANDBOX_IMAGE="$(SANDBOX_IMAGE)" VERIFY_KATA_WITH_KUBECTL=1 OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" $(UV) run --no-project --python .venv/bin/python python $(PYTHON_CLIENT_DIR)/app.py
 
 _cli-client-example: check-example-tools
 	@set -euo pipefail; \
@@ -496,19 +496,18 @@ _cli-client-example: check-example-tools
 		for i in {1..30}; do \
 			kill -0 $$port_forward_pid >/dev/null 2>&1 || (cat "$$port_forward_log"; exit 1); \
 			health=$$(curl -fsS http://localhost:$(SERVER_PORT)/health 2>/dev/null || true); \
-			HEALTH="$$health" python3 -c 'import json, os, sys; sys.exit(0 if json.loads(os.environ["HEALTH"]).get("status") == "healthy" else 1)' >/dev/null 2>&1 && break; \
+			HEALTH="$$health" $(UV) run --no-project python -c 'import json, os, sys; sys.exit(0 if json.loads(os.environ["HEALTH"]).get("status") == "healthy" else 1)' >/dev/null 2>&1 && break; \
 			sleep 1; \
 		done; \
 		kill -0 $$port_forward_pid >/dev/null 2>&1 || (cat "$$port_forward_log"; exit 1); \
 		health=$$(curl -fsS http://localhost:$(SERVER_PORT)/health); \
-		HEALTH="$$health" python3 -c 'import json, os, sys; sys.exit(0 if json.loads(os.environ["HEALTH"]).get("status") == "healthy" else 1)' || (echo "Unexpected opensandbox-server health response: $$health"; exit 1); \
+		HEALTH="$$health" $(UV) run --no-project python -c 'import json, os, sys; sys.exit(0 if json.loads(os.environ["HEALTH"]).get("status") == "healthy" else 1)' || (echo "Unexpected opensandbox-server health response: $$health"; exit 1); \
 		cli_api_key=$$(kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" get secret opensandbox-server -o jsonpath='{.data.api-key}' 2>/dev/null | base64 -d 2>/dev/null || true); \
 		cli_api_key="$${cli_api_key:-$${OPEN_SANDBOX_API_KEY:-}}"; \
 		test -n "$$cli_api_key" || (echo "OPEN_SANDBOX_API_KEY is required, or deploy opensandbox-server with make k8s-deploy first"; exit 1); \
-		python3 -m venv .venv; \
-		. .venv/bin/activate; \
-		pip install -q -r $(CLI_CLIENT_DIR)/requirements.txt opensandbox-cli==$(OPEN_SANDBOX_CLI_VERSION); \
-		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_PROTOCOL=http OPEN_SANDBOX_API_KEY="$$cli_api_key" OPEN_SANDBOX_USE_SERVER_PROXY=true SANDBOX_IMAGE="$(SANDBOX_IMAGE)" VERIFY_KATA_WITH_KUBECTL=1 OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" OSB_BIN="$$(command -v osb)" bash $(CLI_CLIENT_DIR)/osb-cli-smoke.sh
+		$(UV) venv --allow-existing .venv; \
+		$(UV) pip install -q --python .venv -r $(CLI_CLIENT_DIR)/requirements.txt opensandbox-cli==$(OPEN_SANDBOX_CLI_VERSION); \
+		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_PROTOCOL=http OPEN_SANDBOX_API_KEY="$$cli_api_key" OPEN_SANDBOX_USE_SERVER_PROXY=true SANDBOX_IMAGE="$(SANDBOX_IMAGE)" VERIFY_KATA_WITH_KUBECTL=1 OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" OSB_BIN=".venv/bin/osb" UV="$(UV)" UV_PYTHON=".venv/bin/python" bash $(CLI_CLIENT_DIR)/osb-cli-smoke.sh
 
 _pause-renew-example: check-example-tools
 	@set -euo pipefail; \
@@ -519,19 +518,18 @@ _pause-renew-example: check-example-tools
 		for i in {1..30}; do \
 			kill -0 $$port_forward_pid >/dev/null 2>&1 || (cat "$$port_forward_log"; exit 1); \
 			health=$$(curl -fsS http://localhost:$(SERVER_PORT)/health 2>/dev/null || true); \
-			HEALTH="$$health" python3 -c 'import json, os, sys; sys.exit(0 if json.loads(os.environ["HEALTH"]).get("status") == "healthy" else 1)' >/dev/null 2>&1 && break; \
+			HEALTH="$$health" $(UV) run --no-project python -c 'import json, os, sys; sys.exit(0 if json.loads(os.environ["HEALTH"]).get("status") == "healthy" else 1)' >/dev/null 2>&1 && break; \
 			sleep 1; \
 		done; \
 		kill -0 $$port_forward_pid >/dev/null 2>&1 || (cat "$$port_forward_log"; exit 1); \
 		health=$$(curl -fsS http://localhost:$(SERVER_PORT)/health); \
-		HEALTH="$$health" python3 -c 'import json, os, sys; sys.exit(0 if json.loads(os.environ["HEALTH"]).get("status") == "healthy" else 1)' || (echo "Unexpected opensandbox-server health response: $$health"; exit 1); \
+		HEALTH="$$health" $(UV) run --no-project python -c 'import json, os, sys; sys.exit(0 if json.loads(os.environ["HEALTH"]).get("status") == "healthy" else 1)' || (echo "Unexpected opensandbox-server health response: $$health"; exit 1); \
 		example_api_key=$$(kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" get secret opensandbox-server -o jsonpath='{.data.api-key}' 2>/dev/null | base64 -d 2>/dev/null || true); \
 		example_api_key="$${example_api_key:-$${OPEN_SANDBOX_API_KEY:-}}"; \
 		test -n "$$example_api_key" || (echo "OPEN_SANDBOX_API_KEY is required, or deploy opensandbox-server with make k8s-deploy first"; exit 1); \
-		python3 -m venv .venv; \
-		. .venv/bin/activate; \
-		pip install -q -r $(PAUSE_RENEW_EXAMPLE_DIR)/requirements.txt; \
-		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_API_KEY="$$example_api_key" SANDBOX_IMAGE="$(SANDBOX_IMAGE)" VERIFY_WITH_KUBECTL=1 OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" python $(PAUSE_RENEW_EXAMPLE_DIR)/app.py
+		$(UV) venv --allow-existing .venv; \
+		$(UV) pip install -q --python .venv -r $(PAUSE_RENEW_EXAMPLE_DIR)/requirements.txt; \
+		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_API_KEY="$$example_api_key" SANDBOX_IMAGE="$(SANDBOX_IMAGE)" VERIFY_WITH_KUBECTL=1 OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" $(UV) run --no-project --python .venv/bin/python python $(PAUSE_RENEW_EXAMPLE_DIR)/app.py
 
 _pause-renew-cli-example: check-example-tools
 	@set -euo pipefail; \
@@ -542,19 +540,18 @@ _pause-renew-cli-example: check-example-tools
 		for i in {1..30}; do \
 			kill -0 $$port_forward_pid >/dev/null 2>&1 || (cat "$$port_forward_log"; exit 1); \
 			health=$$(curl -fsS http://localhost:$(SERVER_PORT)/health 2>/dev/null || true); \
-			HEALTH="$$health" python3 -c 'import json, os, sys; sys.exit(0 if json.loads(os.environ["HEALTH"]).get("status") == "healthy" else 1)' >/dev/null 2>&1 && break; \
+			HEALTH="$$health" $(UV) run --no-project python -c 'import json, os, sys; sys.exit(0 if json.loads(os.environ["HEALTH"]).get("status") == "healthy" else 1)' >/dev/null 2>&1 && break; \
 			sleep 1; \
 		done; \
 		kill -0 $$port_forward_pid >/dev/null 2>&1 || (cat "$$port_forward_log"; exit 1); \
 		health=$$(curl -fsS http://localhost:$(SERVER_PORT)/health); \
-		HEALTH="$$health" python3 -c 'import json, os, sys; sys.exit(0 if json.loads(os.environ["HEALTH"]).get("status") == "healthy" else 1)' || (echo "Unexpected opensandbox-server health response: $$health"; exit 1); \
+		HEALTH="$$health" $(UV) run --no-project python -c 'import json, os, sys; sys.exit(0 if json.loads(os.environ["HEALTH"]).get("status") == "healthy" else 1)' || (echo "Unexpected opensandbox-server health response: $$health"; exit 1); \
 		example_api_key=$$(kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" get secret opensandbox-server -o jsonpath='{.data.api-key}' 2>/dev/null | base64 -d 2>/dev/null || true); \
 		example_api_key="$${example_api_key:-$${OPEN_SANDBOX_API_KEY:-}}"; \
 		test -n "$$example_api_key" || (echo "OPEN_SANDBOX_API_KEY is required, or deploy opensandbox-server with make k8s-deploy first"; exit 1); \
-		python3 -m venv .venv; \
-		. .venv/bin/activate; \
-		pip install -q -r $(PAUSE_RENEW_CLI_EXAMPLE_DIR)/requirements.txt opensandbox-cli==$(OPEN_SANDBOX_CLI_VERSION); \
-		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_PROTOCOL=http OPEN_SANDBOX_API_KEY="$$example_api_key" SANDBOX_IMAGE="$(SANDBOX_IMAGE)" VERIFY_WITH_KUBECTL=1 OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" OSB_BIN="$$(command -v osb)" bash $(PAUSE_RENEW_CLI_EXAMPLE_DIR)/osb-pause-renew.sh
+		$(UV) venv --allow-existing .venv; \
+		$(UV) pip install -q --python .venv -r $(PAUSE_RENEW_CLI_EXAMPLE_DIR)/requirements.txt opensandbox-cli==$(OPEN_SANDBOX_CLI_VERSION); \
+		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_PROTOCOL=http OPEN_SANDBOX_API_KEY="$$example_api_key" SANDBOX_IMAGE="$(SANDBOX_IMAGE)" VERIFY_WITH_KUBECTL=1 OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" OSB_BIN=".venv/bin/osb" UV="$(UV)" UV_PYTHON=".venv/bin/python" bash $(PAUSE_RENEW_CLI_EXAMPLE_DIR)/osb-pause-renew.sh
 
 _vscode-image-build: check-acr-vars
 	docker build -t "$(VSCODE_IMAGE)" -f $(VSCODE_EXAMPLE_DIR)/Dockerfile $(VSCODE_EXAMPLE_DIR)
@@ -593,12 +590,12 @@ _vscode-example: check-example-tools check-acr-vars
 		for i in {1..30}; do \
 			kill -0 $$port_forward_pid >/dev/null 2>&1 || (cat "$$port_forward_log"; exit 1); \
 			health=$$(curl -fsS http://localhost:$(SERVER_PORT)/health 2>/dev/null || true); \
-			HEALTH="$$health" python3 -c 'import json, os, sys; sys.exit(0 if json.loads(os.environ["HEALTH"]).get("status") == "healthy" else 1)' >/dev/null 2>&1 && break; \
+			HEALTH="$$health" $(UV) run --no-project python -c 'import json, os, sys; sys.exit(0 if json.loads(os.environ["HEALTH"]).get("status") == "healthy" else 1)' >/dev/null 2>&1 && break; \
 			sleep 1; \
 		done; \
 		kill -0 $$port_forward_pid >/dev/null 2>&1 || (cat "$$port_forward_log"; exit 1); \
 		health=$$(curl -fsS http://localhost:$(SERVER_PORT)/health); \
-		HEALTH="$$health" python3 -c 'import json, os, sys; sys.exit(0 if json.loads(os.environ["HEALTH"]).get("status") == "healthy" else 1)' || (echo "Unexpected opensandbox-server health response: $$health"; exit 1); \
+		HEALTH="$$health" $(UV) run --no-project python -c 'import json, os, sys; sys.exit(0 if json.loads(os.environ["HEALTH"]).get("status") == "healthy" else 1)' || (echo "Unexpected opensandbox-server health response: $$health"; exit 1); \
 		gateway_port_forward_log=$$(mktemp); \
 		kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" port-forward svc/opensandbox-ingress-gateway $(INGRESS_GATEWAY_LOCAL_PORT):80 >"$$gateway_port_forward_log" 2>&1 & \
 		gateway_port_forward_pid=$$!; \
@@ -612,10 +609,9 @@ _vscode-example: check-example-tools check-acr-vars
 		example_api_key=$$(kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" get secret opensandbox-server -o jsonpath='{.data.api-key}' 2>/dev/null | base64 -d 2>/dev/null || true); \
 		example_api_key="$${example_api_key:-$${OPEN_SANDBOX_API_KEY:-}}"; \
 		test -n "$$example_api_key" || (echo "OPEN_SANDBOX_API_KEY is required, or deploy opensandbox-server with make k8s-deploy first"; exit 1); \
-		python3 -m venv .venv; \
-		. .venv/bin/activate; \
-		pip install -q -r $(VSCODE_EXAMPLE_DIR)/requirements.txt; \
-		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_API_KEY="$$example_api_key" SANDBOX_IMAGE="$(VSCODE_IMAGE)" OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" CODE_PORT="$(VSCODE_PORT)" INGRESS_GATEWAY_LOCAL_PORT="$(INGRESS_GATEWAY_LOCAL_PORT)" VSCODE_GATEWAY_DOMAIN="$(VSCODE_GATEWAY_DOMAIN)" VERIFY_KATA_WITH_KUBECTL=1 python -u $(VSCODE_EXAMPLE_DIR)/main.py
+		$(UV) venv --allow-existing .venv; \
+		$(UV) pip install -q --python .venv -r $(VSCODE_EXAMPLE_DIR)/requirements.txt; \
+		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_API_KEY="$$example_api_key" SANDBOX_IMAGE="$(VSCODE_IMAGE)" OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" CODE_PORT="$(VSCODE_PORT)" INGRESS_GATEWAY_LOCAL_PORT="$(INGRESS_GATEWAY_LOCAL_PORT)" VSCODE_GATEWAY_DOMAIN="$(VSCODE_GATEWAY_DOMAIN)" VERIFY_KATA_WITH_KUBECTL=1 $(UV) run --no-project --python .venv/bin/python python -u $(VSCODE_EXAMPLE_DIR)/main.py
 
 status:
 	kubectl get runtimeclass

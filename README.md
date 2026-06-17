@@ -33,7 +33,7 @@ Use `Standard_DC8as_cc_v5` instead when you specifically need AKS Confidential C
 - `helm`
 - `docker`
 - `make`
-- `python3`
+- `uv`
 - `curl`
 
 ## Quick Start

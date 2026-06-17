@@ -8,7 +8,7 @@ It creates a sandbox, runs commands, writes and reads a file, prints `uname -a`,
 
 - The AKS OpenSandbox server is already deployed with `make k8s-deploy` from the repository root.
 - `kubectl` points at the AKS cluster.
-- `python3` is available.
+- `uv` is available.
 
 ## Automated Run
 
@@ -18,16 +18,15 @@ Run the Python SDK example from the repository root after `make k8s-deploy`:
 make python-client-example
 ```
 
-The target installs SDK dependencies into `.venv`, port-forwards the OpenSandbox server, runs `app.py`, verifies `kata-optimized`, and kills the sandbox when finished.
+The target installs SDK dependencies into `.venv` with `uv`, port-forwards the OpenSandbox server, runs `app.py`, verifies `kata-optimized`, and kills the sandbox when finished.
 
 ## Step-By-Step Run
 
 Install the SDK into the repository virtual environment:
 
 ```bash
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -r examples/python-client/requirements.txt
+uv venv --allow-existing .venv
+uv pip install --python .venv -r examples/python-client/requirements.txt
 ```
 
 Port-forward the OpenSandbox server:
@@ -40,5 +39,5 @@ In another terminal, load the API key from the Kubernetes Secret and run the cli
 
 ```bash
 export OPEN_SANDBOX_API_KEY=$(kubectl -n opensandbox get secret opensandbox-server -o jsonpath='{.data.api-key}' | base64 -d)
-OPEN_SANDBOX_DOMAIN=localhost:8080 VERIFY_KATA_WITH_KUBECTL=1 python examples/python-client/app.py
+OPEN_SANDBOX_DOMAIN=localhost:8080 VERIFY_KATA_WITH_KUBECTL=1 uv run --no-project --python .venv/bin/python python examples/python-client/app.py
 ```
