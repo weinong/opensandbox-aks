@@ -15,6 +15,7 @@ The example provisions AKS and Azure Container Registry with Bicep, installs the
 - `examples/gvisor-runtime/`: optional unsupported gVisor runtime usage notes.
 - `examples/pause-renew/`: Python SDK example for renewing expiration, pausing, resuming, and verifying persisted filesystem state.
 - `examples/pause-renew-cli/`: `osb` CLI example for the same renew, pause, and resume lifecycle.
+- `examples/vscode/`: VS Code Web sandbox image and Python SDK launcher example.
 - `Makefile`: Human-reproducible workflow.
 
 ## SKU Choice
@@ -64,6 +65,8 @@ make aks-credentials
 make acr-login
 make image-build
 make image-push
+make images-build
+make images-push
 make k8s-deploy
 make python-client-example
 make cli-client-example
@@ -75,6 +78,8 @@ make firecracker-install
 make firecracker-example
 make pause-renew-example
 make pause-renew-cli-example
+make vscode-image-push
+make vscode-example
 make clean-k8s
 make clean-opensandbox-crds
 make infra-delete
@@ -89,6 +94,14 @@ The Firecracker targets create/use a dedicated tainted user node pool through
 Bicep and mutate node host files to install Kata's Firecracker shim plus
 devmapper snapshotter configuration. See `deploy/firecracker-runtime/README.md`
 before running them.
+
+The VS Code Web example uses the shared OpenSandbox ingress gateway, which `make k8s-deploy` enables by default. Run it after the deployment is healthy:
+
+```bash
+make k8s-deploy
+make vscode-image-push
+make vscode-example
+```
 
 Kubernetes cleanup targets require explicit confirmation to avoid deleting the wrong environment. `infra-delete` deletes the configured resource group without `CONFIRM_*`, but still rejects exported environment identities and verifies the current Azure subscription matches `SUBSCRIPTION_ID`.
 

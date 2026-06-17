@@ -52,27 +52,42 @@ OPEN_SANDBOX_SNAPSHOT_REGISTRY ?= $(ACR_LOGIN_SERVER)/opensandbox-snapshots
 OPEN_SANDBOX_SNAPSHOT_REGISTRY_INSECURE ?= false
 OPEN_SANDBOX_SNAPSHOT_SECRET ?= opensandbox-snapshot-registry
 OPEN_SANDBOX_IMAGE_COMMITTER_IMAGE ?= opensandbox/image-committer:v0.1.0
+ENABLE_INGRESS_GATEWAY ?= true
+INGRESS_GATEWAY_IMAGE ?= sandbox-registry.cn-zhangjiakou.cr.aliyuncs.com/opensandbox/ingress:v1.0.7
+INGRESS_GATEWAY_ROUTE_MODE ?= header
+INGRESS_GATEWAY_LOCAL_PORT ?= 8081
+INGRESS_GATEWAY_HOST ?= 127.0.0.1:$(INGRESS_GATEWAY_LOCAL_PORT)
+INGRESS_GATEWAY_REPLICAS ?= 1
+VSCODE_GATEWAY_DOMAIN ?= 127.0.0.1.nip.io
 SERVER_IMAGE_NAME ?= opensandbox-kata-server
 SERVER_IMAGE_TAG ?= latest
 SANDBOX_IMAGE ?= python:3.12-slim
+VSCODE_IMAGE_NAME ?= opensandbox-vscode
+VSCODE_IMAGE_TAG ?= latest
 SERVER_PORT ?= 8080
+VSCODE_PORT ?= 8443
 
 SERVER_DEPLOY_DIR := deploy/opensandbox-server
 PYTHON_CLIENT_DIR := examples/python-client
 CLI_CLIENT_DIR := examples/cli-client
 PAUSE_RENEW_EXAMPLE_DIR := examples/pause-renew
 PAUSE_RENEW_CLI_EXAMPLE_DIR := examples/pause-renew-cli
+VSCODE_EXAMPLE_DIR := examples/vscode
 
 ACR_LOGIN_SERVER := $(ACR_NAME).azurecr.io
 SERVER_IMAGE := $(ACR_LOGIN_SERVER)/$(SERVER_IMAGE_NAME):$(SERVER_IMAGE_TAG)
+VSCODE_IMAGE := $(ACR_LOGIN_SERVER)/$(VSCODE_IMAGE_NAME):$(VSCODE_IMAGE_TAG)
+INGRESS_MODE := $(if $(filter true,$(ENABLE_INGRESS_GATEWAY)),gateway,direct)
+INGRESS_GATEWAY_ADDRESS_LINE := $(if $(filter true,$(ENABLE_INGRESS_GATEWAY)),gateway.address = "$(INGRESS_GATEWAY_HOST)",)
+INGRESS_GATEWAY_ROUTE_MODE_LINE := $(if $(filter true,$(ENABLE_INGRESS_GATEWAY)),gateway.route.mode = "$(INGRESS_GATEWAY_ROUTE_MODE)",)
 AZ_SUBSCRIPTION_ARG := $(if $(SUBSCRIPTION_ID),--subscription "$(SUBSCRIPTION_ID)",)
 WAIT_FOR_AKS_SUCCEEDED = set -euo pipefail; for i in $$(seq 1 180); do state=$$(az aks show --resource-group "$(RESOURCE_GROUP)" --name "$(AKS_NAME)" $(AZ_SUBSCRIPTION_ARG) --query provisioningState -o tsv 2>/dev/null || true); if [ "$$state" = "Succeeded" ]; then exit 0; fi; if [ -z "$$state" ]; then echo "Waiting for AKS $(AKS_NAME) to be readable"; else echo "Waiting for AKS $(AKS_NAME) provisioningState=$$state"; fi; sleep 10; done; echo "Timed out waiting for AKS $(AKS_NAME) to reach provisioningState=Succeeded"; exit 1
 
-CONFIGURED_TARGETS := all print-config infra-deploy aks-credentials acr-login image-build image-push controller-install k8s-deploy python-client-example cli-client-example pause-renew-example pause-renew-cli-example
+CONFIGURED_TARGETS := all print-config infra-deploy aks-credentials acr-login image-build image-push images-build images-push controller-install k8s-deploy python-client-example cli-client-example pause-renew-example pause-renew-cli-example vscode-image-build vscode-image-push vscode-example
 INTERNAL_TARGETS := $(addprefix _,$(CONFIGURED_TARGETS))
 MAKEFILE_PATH := $(abspath $(firstword $(MAKEFILE_LIST)))
 
-.PHONY: $(CONFIGURED_TARGETS) $(INTERNAL_TARGETS) help local-config check-tools check-example-tools check-acr-vars check-api-key status clean-k8s clean-opensandbox-crds infra-delete gvisor-nodepool-add gvisor-install gvisor-example gvisor-clean firecracker-nodepool-add firecracker-install firecracker-example firecracker-clean
+.PHONY: $(CONFIGURED_TARGETS) $(INTERNAL_TARGETS) help local-config check-tools check-example-tools check-acr-vars check-api-key check-ingress-gateway status clean-k8s clean-opensandbox-crds infra-delete gvisor-nodepool-add gvisor-install gvisor-example gvisor-clean firecracker-nodepool-add firecracker-install firecracker-example firecracker-clean
 
 define configured_target
 $1: local-config
@@ -107,6 +122,8 @@ help:
 		'  make aks-credentials      Fetch kubectl credentials' \
 		'  make image-build          Build opensandbox-server image' \
 		'  make image-push           Push opensandbox-server image' \
+		'  make images-build         Build all repository images' \
+		'  make images-push          Build and push all repository images' \
 		'  make controller-install   Install OpenSandbox controller' \
 		'  make k8s-deploy           Build/push image and deploy Kubernetes resources' \
 		'' \
@@ -125,6 +142,8 @@ help:
 		'  make cli-client-example    Run osb CLI client example' \
 		'  make pause-renew-example      Run Python pause/resume example' \
 		'  make pause-renew-cli-example  Run CLI pause/resume example' \
+		'  make vscode-image-push        Build and push VS Code sandbox image' \
+		'  make vscode-example           Run VS Code Web sandbox example' \
 		'' \
 		'Cleanup:' \
 		'  make clean-k8s                Delete app/controller resources; requires CONFIRM_*' \
@@ -204,10 +223,21 @@ local-config:
 		remove_generated_default '^(export[[:space:]]+)?OPEN_SANDBOX_SNAPSHOT_REGISTRY_INSECURE[[:space:]]*\?=[[:space:]]*false$$'; \
 		remove_generated_default '^(export[[:space:]]+)?OPEN_SANDBOX_SNAPSHOT_SECRET[[:space:]]*\?=[[:space:]]*opensandbox-snapshot-registry$$'; \
 		remove_generated_default '^(export[[:space:]]+)?OPEN_SANDBOX_IMAGE_COMMITTER_IMAGE[[:space:]]*\?=[[:space:]]*opensandbox/image-committer:v0\.1\.0$$'; \
+		remove_generated_default '^(export[[:space:]]+)?ENABLE_INGRESS_GATEWAY[[:space:]]*\?=[[:space:]]*(false|true)$$'; \
+		remove_generated_default '^(export[[:space:]]+)?INGRESS_GATEWAY_IMAGE[[:space:]]*\?=[[:space:]]*sandbox-registry\.cn-zhangjiakou\.cr\.aliyuncs\.com/opensandbox/ingress:v1\.0\.7$$'; \
+		remove_generated_default '^(export[[:space:]]+)?INGRESS_GATEWAY_ROUTE_MODE[[:space:]]*\?=[[:space:]]*uri$$'; \
+		remove_generated_default '^(export[[:space:]]+)?INGRESS_GATEWAY_ROUTE_MODE[[:space:]]*\?=[[:space:]]*header$$'; \
+		remove_generated_default '^(export[[:space:]]+)?INGRESS_GATEWAY_LOCAL_PORT[[:space:]]*\?=[[:space:]]*8081$$'; \
+		remove_generated_default '^(export[[:space:]]+)?INGRESS_GATEWAY_HOST[[:space:]]*\?=[[:space:]]*127\.0\.0\.1:\$$\(INGRESS_GATEWAY_LOCAL_PORT\)$$'; \
+		remove_generated_default '^(export[[:space:]]+)?INGRESS_GATEWAY_REPLICAS[[:space:]]*\?=[[:space:]]*1$$'; \
+		remove_generated_default '^(export[[:space:]]+)?VSCODE_GATEWAY_DOMAIN[[:space:]]*\?=[[:space:]]*127\.0\.0\.1\.nip\.io$$'; \
 		remove_generated_default '^(export[[:space:]]+)?SERVER_IMAGE_NAME[[:space:]]*\?=[[:space:]]*opensandbox-kata-server$$'; \
 		remove_generated_default '^(export[[:space:]]+)?SERVER_IMAGE_TAG[[:space:]]*\?=[[:space:]]*latest$$'; \
 		remove_generated_default '^(export[[:space:]]+)?SANDBOX_IMAGE[[:space:]]*\?=[[:space:]]*python:3\.12-slim$$'; \
+		remove_generated_default '^(export[[:space:]]+)?VSCODE_IMAGE_NAME[[:space:]]*\?=[[:space:]]*opensandbox-vscode$$'; \
+		remove_generated_default '^(export[[:space:]]+)?VSCODE_IMAGE_TAG[[:space:]]*\?=[[:space:]]*latest$$'; \
 		remove_generated_default '^(export[[:space:]]+)?SERVER_PORT[[:space:]]*\?=[[:space:]]*8080$$'; \
+		remove_generated_default '^(export[[:space:]]+)?VSCODE_PORT[[:space:]]*\?=[[:space:]]*8443$$'; \
 		remove_generated_default '^(export[[:space:]]+)?NODE_VM_SIZE[[:space:]]*\?=[[:space:]]*Standard_D4s_v3$$'; \
 		remove_generated_default '^(export[[:space:]]+)?SYSTEM_NODE_COUNT[[:space:]]*\?=[[:space:]]*1$$'; \
 		remove_generated_default '^(export[[:space:]]+)?KATA_NODEPOOL_NAME[[:space:]]*\?=[[:space:]]*katapool$$'; \
@@ -269,7 +299,16 @@ _print-config:
 	@echo "OPEN_SANDBOX_SNAPSHOT_REGISTRY_INSECURE=$(OPEN_SANDBOX_SNAPSHOT_REGISTRY_INSECURE)"
 	@echo "OPEN_SANDBOX_SNAPSHOT_SECRET=$(OPEN_SANDBOX_SNAPSHOT_SECRET)"
 	@echo "OPEN_SANDBOX_IMAGE_COMMITTER_IMAGE=$(OPEN_SANDBOX_IMAGE_COMMITTER_IMAGE)"
+	@echo "ENABLE_INGRESS_GATEWAY=$(ENABLE_INGRESS_GATEWAY)"
+	@echo "INGRESS_GATEWAY_IMAGE=$(INGRESS_GATEWAY_IMAGE)"
+	@echo "INGRESS_GATEWAY_ROUTE_MODE=$(INGRESS_GATEWAY_ROUTE_MODE)"
+	@echo "INGRESS_GATEWAY_LOCAL_PORT=$(INGRESS_GATEWAY_LOCAL_PORT)"
+	@echo "INGRESS_GATEWAY_HOST=$(INGRESS_GATEWAY_HOST)"
+	@echo "INGRESS_GATEWAY_REPLICAS=$(INGRESS_GATEWAY_REPLICAS)"
+	@echo "VSCODE_GATEWAY_DOMAIN=$(VSCODE_GATEWAY_DOMAIN)"
 	@echo "SERVER_IMAGE=$(SERVER_IMAGE)"
+	@echo "VSCODE_IMAGE=$(VSCODE_IMAGE)"
+	@echo "VSCODE_PORT=$(VSCODE_PORT)"
 
 check-tools:
 	@command -v az >/dev/null || (echo "az is required"; exit 1)
@@ -293,6 +332,12 @@ check-acr-vars:
 
 check-api-key:
 	@test -n "$${OPEN_SANDBOX_API_KEY}" || (echo "OPEN_SANDBOX_API_KEY is required"; exit 1)
+
+check-ingress-gateway:
+	@if [ "$(ENABLE_INGRESS_GATEWAY)" = "true" ] && [ "$(INGRESS_GATEWAY_ROUTE_MODE)" != "header" ] && [ "$(INGRESS_GATEWAY_ROUTE_MODE)" != "uri" ]; then \
+		echo "INGRESS_GATEWAY_ROUTE_MODE must be header or uri"; \
+		exit 1; \
+	fi
 
 _infra-deploy:
 	az group create --name "$(RESOURCE_GROUP)" --location "$(LOCATION)" $(AZ_SUBSCRIPTION_ARG)
@@ -343,6 +388,10 @@ _image-push: check-acr-vars _image-build
 		DOCKER_CONFIG="$$docker_config" docker login "$$login_server" --username 00000000-0000-0000-0000-000000000000 --password-stdin <<< "$$token"; \
 		DOCKER_CONFIG="$$docker_config" docker push "$(SERVER_IMAGE)"
 
+_images-build: _image-build _vscode-image-build
+
+_images-push: _image-push _vscode-image-push
+
 _controller-install:
 	helm upgrade --install opensandbox-controller \
 		https://github.com/opensandbox-group/OpenSandbox/releases/download/helm/opensandbox-controller/$(OPEN_SANDBOX_CONTROLLER_VERSION)/opensandbox-controller-$(OPEN_SANDBOX_CONTROLLER_VERSION).tgz \
@@ -363,7 +412,7 @@ _controller-install:
 	kubectl apply -f $(SERVER_DEPLOY_DIR)/k8s/kata-optimized-runtimeclass.yaml
 	kubectl get runtimeclass kata-optimized
 
-_k8s-deploy: check-acr-vars check-api-key _image-push
+_k8s-deploy: check-acr-vars check-api-key check-ingress-gateway _image-push
 	kubectl apply -f $(SERVER_DEPLOY_DIR)/k8s/kata-optimized-runtimeclass.yaml
 	kubectl create namespace "$(OPEN_SANDBOX_NAMESPACE)" --dry-run=client -o yaml | kubectl apply -f -
 	kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" create serviceaccount opensandbox-server --dry-run=client -o yaml | kubectl apply -f -
@@ -400,10 +449,22 @@ _k8s-deploy: check-acr-vars check-api-key _image-push
 		--from-file=batchsandbox-template.yaml=/dev/stdin \
 		--dry-run=client -o yaml | kubectl apply -f -
 	sed \
-		-e 's|__NAMESPACE__|$(OPEN_SANDBOX_NAMESPACE)|g' \
+		-e 's#__NAMESPACE__#$(OPEN_SANDBOX_NAMESPACE)#g' \
+		-e 's#__INGRESS_MODE__#$(INGRESS_MODE)#g' \
+		-e 's#__INGRESS_GATEWAY_ADDRESS__#$(INGRESS_GATEWAY_ADDRESS_LINE)#g' \
+		-e 's#__INGRESS_GATEWAY_ROUTE_MODE__#$(INGRESS_GATEWAY_ROUTE_MODE_LINE)#g' \
 		$(SERVER_DEPLOY_DIR)/config/sandbox.toml | kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" create configmap opensandbox-server-config \
 		--from-file=sandbox.toml=/dev/stdin \
 		--dry-run=client -o yaml | kubectl apply -f -
+	@if [ "$(ENABLE_INGRESS_GATEWAY)" = "true" ]; then \
+		sed \
+			-e 's#__NAMESPACE__#$(OPEN_SANDBOX_NAMESPACE)#g' \
+			-e 's#__GATEWAY_IMAGE__#$(INGRESS_GATEWAY_IMAGE)#g' \
+			-e 's#__GATEWAY_ROUTE_MODE__#$(INGRESS_GATEWAY_ROUTE_MODE)#g' \
+			-e 's#__GATEWAY_REPLICAS__#$(INGRESS_GATEWAY_REPLICAS)#g' \
+			$(SERVER_DEPLOY_DIR)/k8s/opensandbox-ingress-gateway.yaml | kubectl apply -f -; \
+		kubectl rollout status deployment/opensandbox-ingress-gateway -n "$(OPEN_SANDBOX_NAMESPACE)" --timeout=180s; \
+	fi
 	sed \
 		-e 's|__SERVER_IMAGE__|$(SERVER_IMAGE)|g' \
 		-e 's|__NAMESPACE__|$(OPEN_SANDBOX_NAMESPACE)|g' \
@@ -494,6 +555,67 @@ _pause-renew-cli-example: check-example-tools
 		. .venv/bin/activate; \
 		pip install -q -r $(PAUSE_RENEW_CLI_EXAMPLE_DIR)/requirements.txt opensandbox-cli==$(OPEN_SANDBOX_CLI_VERSION); \
 		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_PROTOCOL=http OPEN_SANDBOX_API_KEY="$$example_api_key" SANDBOX_IMAGE="$(SANDBOX_IMAGE)" VERIFY_WITH_KUBECTL=1 OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" OSB_BIN="$$(command -v osb)" bash $(PAUSE_RENEW_CLI_EXAMPLE_DIR)/osb-pause-renew.sh
+
+_vscode-image-build: check-acr-vars
+	docker build -t "$(VSCODE_IMAGE)" -f $(VSCODE_EXAMPLE_DIR)/Dockerfile $(VSCODE_EXAMPLE_DIR)
+
+_vscode-image-push: check-acr-vars _vscode-image-build
+	@set -euo pipefail; \
+		login_server=$$(az acr show --name "$(ACR_NAME)" $(AZ_SUBSCRIPTION_ARG) --query loginServer -o tsv); \
+		test -n "$$login_server"; \
+		test "$(ACR_LOGIN_SERVER)" = "$$login_server"; \
+		docker_config=$$(mktemp -d); \
+		chmod 700 "$$docker_config"; \
+		trap 'DOCKER_CONFIG="$$docker_config" docker logout "'"$$login_server"'" >/dev/null 2>&1 || true; rm -rf "$$docker_config"' EXIT; \
+		token=$$(az acr login --name "$(ACR_NAME)" $(AZ_SUBSCRIPTION_ARG) --expose-token --query accessToken -o tsv); \
+		test -n "$$token"; \
+		DOCKER_CONFIG="$$docker_config" docker login "$$login_server" --username 00000000-0000-0000-0000-000000000000 --password-stdin <<< "$$token"; \
+		DOCKER_CONFIG="$$docker_config" docker push "$(VSCODE_IMAGE)"
+
+_vscode-example: check-example-tools check-acr-vars
+	@set -euo pipefail; \
+		command -v az >/dev/null || (echo "az is required"; exit 1); \
+		if [ "$(ENABLE_INGRESS_GATEWAY)" != "true" ]; then \
+			echo "vscode-example requires ENABLE_INGRESS_GATEWAY=true; redeploy with make k8s-deploy"; \
+			exit 1; \
+		fi; \
+		if [ "$(INGRESS_GATEWAY_ROUTE_MODE)" != "header" ]; then \
+			echo "vscode-example no-proxy browser access requires INGRESS_GATEWAY_ROUTE_MODE=header; redeploy with make k8s-deploy"; \
+			exit 1; \
+		fi; \
+		az acr repository show-tags --name "$(ACR_NAME)" $(AZ_SUBSCRIPTION_ARG) --repository "$(VSCODE_IMAGE_NAME)" --query "[?@=='$(VSCODE_IMAGE_TAG)'] | [0]" -o tsv | grep -Fxq "$(VSCODE_IMAGE_TAG)" || (echo "$(VSCODE_IMAGE) is not pushed; run make vscode-image-push or make images-push first"; exit 1); \
+		port_forward_log=$$(mktemp); \
+		kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" port-forward svc/opensandbox-server $(SERVER_PORT):8080 >"$$port_forward_log" 2>&1 & \
+		port_forward_pid=$$!; \
+		gateway_port_forward_pid=; \
+		gateway_port_forward_log=; \
+		trap 'kill $$port_forward_pid >/dev/null 2>&1 || true; if [ -n "$$gateway_port_forward_pid" ]; then kill $$gateway_port_forward_pid >/dev/null 2>&1 || true; fi; rm -f "$$port_forward_log" "$$gateway_port_forward_log"' EXIT; \
+		for i in {1..30}; do \
+			kill -0 $$port_forward_pid >/dev/null 2>&1 || (cat "$$port_forward_log"; exit 1); \
+			health=$$(curl -fsS http://localhost:$(SERVER_PORT)/health 2>/dev/null || true); \
+			HEALTH="$$health" python3 -c 'import json, os, sys; sys.exit(0 if json.loads(os.environ["HEALTH"]).get("status") == "healthy" else 1)' >/dev/null 2>&1 && break; \
+			sleep 1; \
+		done; \
+		kill -0 $$port_forward_pid >/dev/null 2>&1 || (cat "$$port_forward_log"; exit 1); \
+		health=$$(curl -fsS http://localhost:$(SERVER_PORT)/health); \
+		HEALTH="$$health" python3 -c 'import json, os, sys; sys.exit(0 if json.loads(os.environ["HEALTH"]).get("status") == "healthy" else 1)' || (echo "Unexpected opensandbox-server health response: $$health"; exit 1); \
+		gateway_port_forward_log=$$(mktemp); \
+		kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" port-forward svc/opensandbox-ingress-gateway $(INGRESS_GATEWAY_LOCAL_PORT):80 >"$$gateway_port_forward_log" 2>&1 & \
+		gateway_port_forward_pid=$$!; \
+		for i in {1..30}; do \
+			kill -0 $$gateway_port_forward_pid >/dev/null 2>&1 || (cat "$$gateway_port_forward_log"; exit 1); \
+			curl -fsS http://127.0.0.1:$(INGRESS_GATEWAY_LOCAL_PORT)/status.ok >/dev/null 2>&1 && break; \
+			sleep 1; \
+		done; \
+		kill -0 $$gateway_port_forward_pid >/dev/null 2>&1 || (cat "$$gateway_port_forward_log"; exit 1); \
+		curl -fsS http://127.0.0.1:$(INGRESS_GATEWAY_LOCAL_PORT)/status.ok >/dev/null; \
+		example_api_key=$$(kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" get secret opensandbox-server -o jsonpath='{.data.api-key}' 2>/dev/null | base64 -d 2>/dev/null || true); \
+		example_api_key="$${example_api_key:-$${OPEN_SANDBOX_API_KEY:-}}"; \
+		test -n "$$example_api_key" || (echo "OPEN_SANDBOX_API_KEY is required, or deploy opensandbox-server with make k8s-deploy first"; exit 1); \
+		python3 -m venv .venv; \
+		. .venv/bin/activate; \
+		pip install -q -r $(VSCODE_EXAMPLE_DIR)/requirements.txt; \
+		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_API_KEY="$$example_api_key" SANDBOX_IMAGE="$(VSCODE_IMAGE)" OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" CODE_PORT="$(VSCODE_PORT)" INGRESS_GATEWAY_LOCAL_PORT="$(INGRESS_GATEWAY_LOCAL_PORT)" VSCODE_GATEWAY_DOMAIN="$(VSCODE_GATEWAY_DOMAIN)" VERIFY_KATA_WITH_KUBECTL=1 python -u $(VSCODE_EXAMPLE_DIR)/main.py
 
 status:
 	kubectl get runtimeclass

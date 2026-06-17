@@ -22,7 +22,9 @@ type = "kata"
 k8s_runtime_class = "kata-optimized"
 
 [ingress]
-mode = "direct"
+mode = "__INGRESS_MODE__"
+__INGRESS_GATEWAY_ADDRESS__
+__INGRESS_GATEWAY_ROUTE_MODE__
 
 [egress]
 image = "opensandbox/egress:v1.1.0"
