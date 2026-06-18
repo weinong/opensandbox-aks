@@ -42,12 +42,12 @@ FIRECRACKER_NODE_COUNT ?= 1
 
 # Stable workflow defaults stay in this Makefile unless explicitly overridden.
 ASSIGN_ACR_PULL_ROLE ?= true
-ACR_ADMIN_USER_ENABLED ?= false
+ACR_ADMIN_USER_ENABLED ?= true
 OPEN_SANDBOX_NAMESPACE ?= opensandbox
 OPEN_SANDBOX_CONTROLLER_VERSION ?= 0.2.0
 OPEN_SANDBOX_CLI_VERSION ?= 0.1.1
 KATA_DEPLOY_CHART ?= https://github.com/kata-containers/kata-containers/releases/download/3.31.0/kata-deploy-3.31.0.tgz
-ENABLE_SNAPSHOT_REGISTRY_SECRET ?= false
+ENABLE_SNAPSHOT_REGISTRY_SECRET ?= true
 OPEN_SANDBOX_SNAPSHOT_REGISTRY ?= $(ACR_LOGIN_SERVER)/opensandbox-snapshots
 OPEN_SANDBOX_SNAPSHOT_REGISTRY_INSECURE ?= false
 OPEN_SANDBOX_SNAPSHOT_SECRET ?= opensandbox-snapshot-registry
@@ -224,10 +224,12 @@ local-config:
 		}; \
 		remove_generated_default '^(export[[:space:]]+)?ASSIGN_ACR_PULL_ROLE[[:space:]]*\?=[[:space:]]*true$$'; \
 		remove_generated_default '^(export[[:space:]]+)?ACR_ADMIN_USER_ENABLED[[:space:]]*\?=[[:space:]]*false$$'; \
+		remove_generated_default '^(export[[:space:]]+)?ACR_ADMIN_USER_ENABLED[[:space:]]*\?=[[:space:]]*true$$'; \
 		remove_generated_default '^(export[[:space:]]+)?OPEN_SANDBOX_CONTROLLER_VERSION[[:space:]]*\?=[[:space:]]*0\.1\.0$$'; \
 		remove_generated_default '^(export[[:space:]]+)?OPEN_SANDBOX_CONTROLLER_VERSION[[:space:]]*\?=[[:space:]]*0\.2\.0$$'; \
 		remove_generated_default '^(export[[:space:]]+)?OPEN_SANDBOX_CLI_VERSION[[:space:]]*\?=[[:space:]]*0\.1\.1$$'; \
 		remove_generated_default '^(export[[:space:]]+)?ENABLE_SNAPSHOT_REGISTRY_SECRET[[:space:]]*\?=[[:space:]]*false$$'; \
+		remove_generated_default '^(export[[:space:]]+)?ENABLE_SNAPSHOT_REGISTRY_SECRET[[:space:]]*\?=[[:space:]]*true$$'; \
 		remove_generated_default '^(export[[:space:]]+)?OPEN_SANDBOX_SNAPSHOT_REGISTRY[[:space:]]*\?=[[:space:]]*\$$\(ACR_NAME\)\.azurecr\.io/opensandbox-snapshots$$'; \
 		remove_generated_default '^(export[[:space:]]+)?OPEN_SANDBOX_SNAPSHOT_REGISTRY_INSECURE[[:space:]]*\?=[[:space:]]*false$$'; \
 		remove_generated_default '^(export[[:space:]]+)?OPEN_SANDBOX_SNAPSHOT_SECRET[[:space:]]*\?=[[:space:]]*opensandbox-snapshot-registry$$'; \

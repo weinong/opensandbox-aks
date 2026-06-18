@@ -42,7 +42,7 @@ controller.snapshot.resumePullSecret=$(OPEN_SANDBOX_SNAPSHOT_SECRET)
 controller.snapshot.imageCommitterImage=$(OPEN_SANDBOX_IMAGE_COMMITTER_IMAGE)
 ```
 
-`make k8s-deploy` creates `OPEN_SANDBOX_SNAPSHOT_SECRET` as a docker-registry secret only when both `ENABLE_SNAPSHOT_REGISTRY_SECRET=true` and `ACR_ADMIN_USER_ENABLED=true` are set. Otherwise, create an equivalent `kubernetes.io/dockerconfigjson` secret in the sandbox namespace before calling `sandbox pause`.
+`make k8s-deploy` creates `OPEN_SANDBOX_SNAPSHOT_SECRET` as a docker-registry secret by default when `OPEN_SANDBOX_SNAPSHOT_REGISTRY` points at this repo's ACR. Otherwise, create an equivalent `kubernetes.io/dockerconfigjson` secret in the sandbox namespace before calling `sandbox pause`, or set `ENABLE_SNAPSHOT_REGISTRY_SECRET=false` to opt out of automatic secret creation.
 
 Deploy from the repository root with `make k8s-deploy`, or run the full workflow with `make all`.
 
