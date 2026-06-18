@@ -7,7 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY --from=ghcr.io/astral-sh/uv:0.8.14 /uv /usr/local/bin/uv
-RUN uv pip install --system --no-cache opensandbox-server==0.1.14
+RUN uv pip install --system --no-cache opensandbox-server==0.2.0
 
 COPY deploy/opensandbox-server/k8s/batchsandbox-template.yaml /app/batchsandbox-template.yaml
 

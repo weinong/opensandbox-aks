@@ -64,8 +64,12 @@ SERVER_IMAGE_TAG ?= latest
 SANDBOX_IMAGE ?= python:3.12-slim
 VSCODE_IMAGE_NAME ?= opensandbox-vscode
 VSCODE_IMAGE_TAG ?= latest
+COPILOT_CLI_IMAGE_NAME ?= opensandbox-copilot-cli
+COPILOT_CLI_IMAGE_TAG ?= latest
 SERVER_PORT ?= 8080
 VSCODE_PORT ?= 8443
+COPILOT_CREDENTIAL_HOSTS ?= api.github.com,github.com,api.enterprise.githubcopilot.com
+COPILOT_EGRESS_HOSTS ?= api.github.com,github.com,copilot-proxy.githubusercontent.com,api.githubcopilot.com,api.enterprise.githubcopilot.com,copilot-telemetry.githubusercontent.com,telemetry.enterprise.githubcopilot.com
 UV ?= uv
 
 SERVER_DEPLOY_DIR := deploy/opensandbox-server
@@ -74,17 +78,19 @@ CLI_CLIENT_DIR := examples/cli-client
 PAUSE_RENEW_EXAMPLE_DIR := examples/pause-renew
 PAUSE_RENEW_CLI_EXAMPLE_DIR := examples/pause-renew-cli
 VSCODE_EXAMPLE_DIR := examples/vscode
+GITHUB_COPILOT_CLI_EXAMPLE_DIR := examples/github-copilot-cli
 
 ACR_LOGIN_SERVER := $(ACR_NAME).azurecr.io
 SERVER_IMAGE := $(ACR_LOGIN_SERVER)/$(SERVER_IMAGE_NAME):$(SERVER_IMAGE_TAG)
 VSCODE_IMAGE := $(ACR_LOGIN_SERVER)/$(VSCODE_IMAGE_NAME):$(VSCODE_IMAGE_TAG)
+COPILOT_CLI_IMAGE := $(ACR_LOGIN_SERVER)/$(COPILOT_CLI_IMAGE_NAME):$(COPILOT_CLI_IMAGE_TAG)
 INGRESS_MODE := $(if $(filter true,$(ENABLE_INGRESS_GATEWAY)),gateway,direct)
 INGRESS_GATEWAY_ADDRESS_LINE := $(if $(filter true,$(ENABLE_INGRESS_GATEWAY)),gateway.address = "$(INGRESS_GATEWAY_HOST)",)
 INGRESS_GATEWAY_ROUTE_MODE_LINE := $(if $(filter true,$(ENABLE_INGRESS_GATEWAY)),gateway.route.mode = "$(INGRESS_GATEWAY_ROUTE_MODE)",)
 AZ_SUBSCRIPTION_ARG := $(if $(SUBSCRIPTION_ID),--subscription "$(SUBSCRIPTION_ID)",)
 WAIT_FOR_AKS_SUCCEEDED = set -euo pipefail; for i in $$(seq 1 180); do state=$$(az aks show --resource-group "$(RESOURCE_GROUP)" --name "$(AKS_NAME)" $(AZ_SUBSCRIPTION_ARG) --query provisioningState -o tsv 2>/dev/null || true); if [ "$$state" = "Succeeded" ]; then exit 0; fi; if [ -z "$$state" ]; then echo "Waiting for AKS $(AKS_NAME) to be readable"; else echo "Waiting for AKS $(AKS_NAME) provisioningState=$$state"; fi; sleep 10; done; echo "Timed out waiting for AKS $(AKS_NAME) to reach provisioningState=Succeeded"; exit 1
 
-CONFIGURED_TARGETS := all print-config infra-deploy aks-credentials acr-login image-build image-push images-build images-push controller-install k8s-deploy python-client-example cli-client-example pause-renew-example pause-renew-cli-example vscode-image-build vscode-image-push vscode-example
+CONFIGURED_TARGETS := all print-config infra-deploy aks-credentials acr-login image-build image-push images-build images-push controller-install k8s-deploy python-client-example cli-client-example pause-renew-example pause-renew-cli-example vscode-image-build vscode-image-push vscode-example github-copilot-cli-image-build github-copilot-cli-image-push github-copilot-cli-example
 INTERNAL_TARGETS := $(addprefix _,$(CONFIGURED_TARGETS))
 MAKEFILE_PATH := $(abspath $(firstword $(MAKEFILE_LIST)))
 
@@ -145,6 +151,8 @@ help:
 		'  make pause-renew-cli-example  Run CLI pause/resume example' \
 		'  make vscode-image-push        Build and push VS Code sandbox image' \
 		'  make vscode-example           Run VS Code Web sandbox example' \
+		'  make github-copilot-cli-image-push Build and push Copilot CLI sandbox image' \
+		'  make github-copilot-cli-example Run GitHub Copilot CLI in a sandbox' \
 		'' \
 		'Cleanup:' \
 		'  make clean-k8s                Delete app/controller resources; requires CONFIRM_*' \
@@ -237,8 +245,18 @@ local-config:
 		remove_generated_default '^(export[[:space:]]+)?SANDBOX_IMAGE[[:space:]]*\?=[[:space:]]*python:3\.12-slim$$'; \
 		remove_generated_default '^(export[[:space:]]+)?VSCODE_IMAGE_NAME[[:space:]]*\?=[[:space:]]*opensandbox-vscode$$'; \
 		remove_generated_default '^(export[[:space:]]+)?VSCODE_IMAGE_TAG[[:space:]]*\?=[[:space:]]*latest$$'; \
+		remove_generated_default '^(export[[:space:]]+)?COPILOT_CLI_IMAGE_NAME[[:space:]]*\?=[[:space:]]*opensandbox-copilot-cli$$'; \
+		remove_generated_default '^(export[[:space:]]+)?COPILOT_CLI_IMAGE_TAG[[:space:]]*\?=[[:space:]]*latest$$'; \
 		remove_generated_default '^(export[[:space:]]+)?SERVER_PORT[[:space:]]*\?=[[:space:]]*8080$$'; \
 		remove_generated_default '^(export[[:space:]]+)?VSCODE_PORT[[:space:]]*\?=[[:space:]]*8443$$'; \
+		remove_generated_default '^(export[[:space:]]+)?COPILOT_AUTH_HOSTS[[:space:]]*\?=[[:space:]]*api\.github\.com,github\.com,copilot-proxy\.githubusercontent\.com,api\.githubcopilot\.com$$'; \
+		remove_generated_default '^(export[[:space:]]+)?COPILOT_CREDENTIAL_HOSTS[[:space:]]*\?=[[:space:]]*api\.github\.com,github\.com$$'; \
+		remove_generated_default '^(export[[:space:]]+)?COPILOT_CREDENTIAL_HOSTS[[:space:]]*\?=[[:space:]]*api\.github\.com,github\.com,api\.enterprise\.githubcopilot\.com$$'; \
+		remove_generated_default '^(export[[:space:]]+)?COPILOT_EGRESS_HOSTS[[:space:]]*\?=[[:space:]]*api\.github\.com,github\.com,copilot-proxy\.githubusercontent\.com,api\.githubcopilot\.com,copilot-telemetry\.githubusercontent\.com$$'; \
+		remove_generated_default '^(export[[:space:]]+)?COPILOT_EGRESS_HOSTS[[:space:]]*\?=[[:space:]]*api\.github\.com,github\.com,copilot-proxy\.githubusercontent\.com,api\.githubcopilot\.com,api\.enterprise\.githubcopilot\.com,copilot-telemetry\.githubusercontent\.com,telemetry\.enterprise\.githubcopilot\.com$$'; \
+		remove_generated_default '^(export[[:space:]]+)?COPILOT_INSTALL_HOSTS[[:space:]]*\?=[[:space:]]*gh\.io,github\.com,objects\.githubusercontent\.com,release-assets\.githubusercontent\.com$$'; \
+		remove_generated_default '^(export[[:space:]]+)?COPILOT_INSTALL_HOSTS[[:space:]]*\?=[[:space:]]*gh\.io,deb\.debian\.org,security\.debian\.org,github\.com,objects\.githubusercontent\.com,release-assets\.githubusercontent\.com$$'; \
+		remove_generated_default '^(export[[:space:]]+)?COPILOT_INSTALL_HOSTS[[:space:]]*\?=[[:space:]]*gh\.io,deb\.debian\.org,security\.debian\.org,github\.com,raw\.githubusercontent\.com,objects\.githubusercontent\.com,release-assets\.githubusercontent\.com$$'; \
 		remove_generated_default '^(export[[:space:]]+)?NODE_VM_SIZE[[:space:]]*\?=[[:space:]]*Standard_D4s_v3$$'; \
 		remove_generated_default '^(export[[:space:]]+)?SYSTEM_NODE_COUNT[[:space:]]*\?=[[:space:]]*1$$'; \
 		remove_generated_default '^(export[[:space:]]+)?KATA_NODEPOOL_NAME[[:space:]]*\?=[[:space:]]*katapool$$'; \
@@ -309,7 +327,10 @@ _print-config:
 	@echo "VSCODE_GATEWAY_DOMAIN=$(VSCODE_GATEWAY_DOMAIN)"
 	@echo "SERVER_IMAGE=$(SERVER_IMAGE)"
 	@echo "VSCODE_IMAGE=$(VSCODE_IMAGE)"
+	@echo "COPILOT_CLI_IMAGE=$(COPILOT_CLI_IMAGE)"
 	@echo "VSCODE_PORT=$(VSCODE_PORT)"
+	@echo "COPILOT_CREDENTIAL_HOSTS=$(COPILOT_CREDENTIAL_HOSTS)"
+	@echo "COPILOT_EGRESS_HOSTS=$(COPILOT_EGRESS_HOSTS)"
 
 check-tools:
 	@command -v az >/dev/null || (echo "az is required"; exit 1)
@@ -389,9 +410,9 @@ _image-push: check-acr-vars _image-build
 		DOCKER_CONFIG="$$docker_config" docker login "$$login_server" --username 00000000-0000-0000-0000-000000000000 --password-stdin <<< "$$token"; \
 		DOCKER_CONFIG="$$docker_config" docker push "$(SERVER_IMAGE)"
 
-_images-build: _image-build _vscode-image-build
+_images-build: _image-build _vscode-image-build _github-copilot-cli-image-build
 
-_images-push: _image-push _vscode-image-push
+_images-push: _image-push _vscode-image-push _github-copilot-cli-image-push
 
 _controller-install:
 	helm upgrade --install opensandbox-controller \
@@ -569,6 +590,22 @@ _vscode-image-push: check-acr-vars _vscode-image-build
 		DOCKER_CONFIG="$$docker_config" docker login "$$login_server" --username 00000000-0000-0000-0000-000000000000 --password-stdin <<< "$$token"; \
 		DOCKER_CONFIG="$$docker_config" docker push "$(VSCODE_IMAGE)"
 
+_github-copilot-cli-image-build: check-acr-vars
+	docker build -t "$(COPILOT_CLI_IMAGE)" -f $(GITHUB_COPILOT_CLI_EXAMPLE_DIR)/Dockerfile $(GITHUB_COPILOT_CLI_EXAMPLE_DIR)
+
+_github-copilot-cli-image-push: check-acr-vars _github-copilot-cli-image-build
+	@set -euo pipefail; \
+		login_server=$$(az acr show --name "$(ACR_NAME)" $(AZ_SUBSCRIPTION_ARG) --query loginServer -o tsv); \
+		test -n "$$login_server"; \
+		test "$(ACR_LOGIN_SERVER)" = "$$login_server"; \
+		docker_config=$$(mktemp -d); \
+		chmod 700 "$$docker_config"; \
+		trap 'DOCKER_CONFIG="$$docker_config" docker logout "'"$$login_server"'" >/dev/null 2>&1 || true; rm -rf "$$docker_config"' EXIT; \
+		token=$$(az acr login --name "$(ACR_NAME)" $(AZ_SUBSCRIPTION_ARG) --expose-token --query accessToken -o tsv); \
+		test -n "$$token"; \
+		DOCKER_CONFIG="$$docker_config" docker login "$$login_server" --username 00000000-0000-0000-0000-000000000000 --password-stdin <<< "$$token"; \
+		DOCKER_CONFIG="$$docker_config" docker push "$(COPILOT_CLI_IMAGE)"
+
 _vscode-example: check-example-tools check-acr-vars
 	@set -euo pipefail; \
 		command -v az >/dev/null || (echo "az is required"; exit 1); \
@@ -612,6 +649,52 @@ _vscode-example: check-example-tools check-acr-vars
 		$(UV) venv --allow-existing .venv; \
 		$(UV) pip install -q --python .venv -r $(VSCODE_EXAMPLE_DIR)/requirements.txt; \
 		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_API_KEY="$$example_api_key" SANDBOX_IMAGE="$(VSCODE_IMAGE)" OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" CODE_PORT="$(VSCODE_PORT)" INGRESS_GATEWAY_LOCAL_PORT="$(INGRESS_GATEWAY_LOCAL_PORT)" VSCODE_GATEWAY_DOMAIN="$(VSCODE_GATEWAY_DOMAIN)" VERIFY_KATA_WITH_KUBECTL=1 $(UV) run --no-project --python .venv/bin/python python -u $(VSCODE_EXAMPLE_DIR)/main.py
+
+_github-copilot-cli-example: check-example-tools check-acr-vars
+	@set -euo pipefail; \
+		command -v az >/dev/null || (echo "az is required"; exit 1); \
+		if [ "$(ENABLE_INGRESS_GATEWAY)" != "true" ]; then \
+			echo "github-copilot-cli-example requires ENABLE_INGRESS_GATEWAY=true; redeploy with make k8s-deploy"; \
+			exit 1; \
+		fi; \
+		if [ "$(INGRESS_GATEWAY_ROUTE_MODE)" != "header" ]; then \
+			echo "github-copilot-cli-example requires INGRESS_GATEWAY_ROUTE_MODE=header; redeploy with make k8s-deploy"; \
+			exit 1; \
+		fi; \
+		github_token="$${COPILOT_GITHUB_TOKEN:-}"; \
+		test -n "$$github_token" || (echo "COPILOT_GITHUB_TOKEN is required"; exit 1); \
+		az acr repository show-tags --name "$(ACR_NAME)" $(AZ_SUBSCRIPTION_ARG) --repository "$(COPILOT_CLI_IMAGE_NAME)" --query "[?@=='$(COPILOT_CLI_IMAGE_TAG)'] | [0]" -o tsv | grep -Fxq "$(COPILOT_CLI_IMAGE_TAG)" || (echo "$(COPILOT_CLI_IMAGE) is not pushed; run make github-copilot-cli-image-push or make images-push first"; exit 1); \
+		port_forward_log=$$(mktemp); \
+		kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" port-forward svc/opensandbox-server $(SERVER_PORT):8080 >"$$port_forward_log" 2>&1 & \
+		port_forward_pid=$$!; \
+		gateway_port_forward_pid=; \
+		gateway_port_forward_log=; \
+		trap 'kill $$port_forward_pid >/dev/null 2>&1 || true; if [ -n "$$gateway_port_forward_pid" ]; then kill $$gateway_port_forward_pid >/dev/null 2>&1 || true; fi; rm -f "$$port_forward_log" "$$gateway_port_forward_log"' EXIT; \
+		for i in {1..30}; do \
+			kill -0 $$port_forward_pid >/dev/null 2>&1 || (cat "$$port_forward_log"; exit 1); \
+			health=$$(curl -fsS http://localhost:$(SERVER_PORT)/health 2>/dev/null || true); \
+			HEALTH="$$health" $(UV) run --no-project python -c 'import json, os, sys; sys.exit(0 if json.loads(os.environ["HEALTH"]).get("status") == "healthy" else 1)' >/dev/null 2>&1 && break; \
+			sleep 1; \
+		done; \
+		kill -0 $$port_forward_pid >/dev/null 2>&1 || (cat "$$port_forward_log"; exit 1); \
+		health=$$(curl -fsS http://localhost:$(SERVER_PORT)/health); \
+		HEALTH="$$health" $(UV) run --no-project python -c 'import json, os, sys; sys.exit(0 if json.loads(os.environ["HEALTH"]).get("status") == "healthy" else 1)' || (echo "Unexpected opensandbox-server health response: $$health"; exit 1); \
+		gateway_port_forward_log=$$(mktemp); \
+		kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" port-forward svc/opensandbox-ingress-gateway $(INGRESS_GATEWAY_LOCAL_PORT):80 >"$$gateway_port_forward_log" 2>&1 & \
+		gateway_port_forward_pid=$$!; \
+		for i in {1..30}; do \
+			kill -0 $$gateway_port_forward_pid >/dev/null 2>&1 || (cat "$$gateway_port_forward_log"; exit 1); \
+			curl -fsS http://127.0.0.1:$(INGRESS_GATEWAY_LOCAL_PORT)/status.ok >/dev/null 2>&1 && break; \
+			sleep 1; \
+		done; \
+		kill -0 $$gateway_port_forward_pid >/dev/null 2>&1 || (cat "$$gateway_port_forward_log"; exit 1); \
+		curl -fsS http://127.0.0.1:$(INGRESS_GATEWAY_LOCAL_PORT)/status.ok >/dev/null; \
+		example_api_key=$$(kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" get secret opensandbox-server -o jsonpath='{.data.api-key}' 2>/dev/null | base64 -d 2>/dev/null || true); \
+		example_api_key="$${example_api_key:-$${OPEN_SANDBOX_API_KEY:-}}"; \
+		test -n "$$example_api_key" || (echo "OPEN_SANDBOX_API_KEY is required, or deploy opensandbox-server with make k8s-deploy first"; exit 1); \
+		$(UV) venv --allow-existing .venv; \
+		$(UV) pip install -q --python .venv -r $(GITHUB_COPILOT_CLI_EXAMPLE_DIR)/requirements.txt; \
+		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_API_KEY="$$example_api_key" COPILOT_GITHUB_TOKEN="$$github_token" SANDBOX_IMAGE="$(COPILOT_CLI_IMAGE)" OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" COPILOT_CREDENTIAL_HOSTS="$(COPILOT_CREDENTIAL_HOSTS)" COPILOT_EGRESS_HOSTS="$(COPILOT_EGRESS_HOSTS)" VERIFY_KATA_WITH_KUBECTL=1 $(UV) run --no-project --python .venv/bin/python python -u $(GITHUB_COPILOT_CLI_EXAMPLE_DIR)/main.py
 
 status:
 	kubectl get runtimeclass

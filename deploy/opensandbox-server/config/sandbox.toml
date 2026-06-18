@@ -27,7 +27,7 @@ __INGRESS_GATEWAY_ADDRESS__
 __INGRESS_GATEWAY_ROUTE_MODE__
 
 [egress]
-image = "opensandbox/egress:v1.1.0"
+image = "opensandbox/egress:v1.1.1"
 mode = "dns"
 
 [store]
