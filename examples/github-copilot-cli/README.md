@@ -55,7 +55,7 @@ Changing the Python launcher, `COPILOT_CREDENTIAL_HOSTS`, `COPILOT_EGRESS_HOSTS`
 
 The real GitHub token is written to OpenSandbox Credential Vault, not to the sandbox pod environment. The sandbox only receives fake `COPILOT_GITHUB_TOKEN` and `GH_TOKEN` values. Credential Vault injects the real token as an outbound `Authorization: Bearer ...` header for matching HTTPS requests to the configured GitHub authentication hosts.
 
-The launcher uses `use_server_proxy=False` and talks to sandbox ports through the local ingress-gateway port-forward. With Credential Proxy enabled, server-proxy mode can try to reach the configured gateway address from inside the server pod; this repository configures that gateway address as the local development address `127.0.0.1:8081`, so the client-side gateway port-forward is required.
+The launcher uses `use_server_proxy=False` and talks to sandbox ports through the local ingress-gateway port-forward. The repository configures the gateway address as the local development address `127.0.0.1:8081`, so local examples use client-side gateway access instead of server-proxy mode.
 
 This repository pins Credential Vault-capable OpenSandbox components for this flow: `opensandbox-server==0.2.0`, `opensandbox==0.1.11`, and `opensandbox/egress:v1.1.1`. The sandbox image pins GitHub Copilot CLI `1.0.63` and verifies the release tarball checksum during image build.
 

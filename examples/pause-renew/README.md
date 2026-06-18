@@ -30,6 +30,12 @@ Port-forward the OpenSandbox server:
 kubectl -n opensandbox port-forward svc/opensandbox-server 8080:8080
 ```
 
+Port-forward the OpenSandbox ingress gateway in a second terminal:
+
+```bash
+kubectl -n opensandbox port-forward svc/opensandbox-ingress-gateway 8081:80
+```
+
 In another terminal, load the API key and run the example:
 
 ```bash

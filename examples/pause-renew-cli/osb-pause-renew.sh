@@ -25,7 +25,7 @@ osb_base=(
   --no-color
   --domain "$OPEN_SANDBOX_DOMAIN"
   --protocol "$OPEN_SANDBOX_PROTOCOL"
-  --use-server-proxy
+  --no-use-server-proxy
 )
 
 sandbox_id=""

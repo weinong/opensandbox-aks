@@ -84,7 +84,7 @@ def make_connection_config(domain: str, api_key: str) -> ConnectionConfig:
         domain=domain,
         api_key=api_key,
         request_timeout=timedelta(seconds=120),
-        use_server_proxy=True,
+        use_server_proxy=False,
     )
 
 

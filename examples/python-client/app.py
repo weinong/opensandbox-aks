@@ -24,7 +24,7 @@ async def main() -> None:
         domain=domain,
         api_key=api_key,
         request_timeout=timedelta(seconds=90),
-        use_server_proxy=True,
+        use_server_proxy=False,
     )
 
     sandbox = await Sandbox.create(
