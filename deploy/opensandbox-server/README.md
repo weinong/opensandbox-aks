@@ -60,7 +60,7 @@ The Makefile then renders:
 [ingress]
 mode = "gateway"
 gateway.address = "127.0.0.1:8081"
-gateway.route.mode = "uri"
+gateway.route.mode = "header"
 ```
 
-It also deploys `k8s/opensandbox-ingress-gateway.yaml`. For local examples, `make vscode-example` port-forwards `svc/opensandbox-ingress-gateway` to `INGRESS_GATEWAY_LOCAL_PORT`, which defaults to `8081`.
+It also deploys `k8s/opensandbox-ingress-gateway.yaml`. For local examples, the Makefile port-forwards `svc/opensandbox-ingress-gateway` to `INGRESS_GATEWAY_LOCAL_PORT`, which defaults to `8081`.

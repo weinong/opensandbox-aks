@@ -36,12 +36,20 @@ Port-forward the OpenSandbox server:
 kubectl -n opensandbox port-forward svc/opensandbox-server 8080:8080
 ```
 
+Port-forward the OpenSandbox ingress gateway in a second terminal:
+
+```bash
+kubectl -n opensandbox port-forward svc/opensandbox-ingress-gateway 8081:80
+```
+
 In another terminal, load the API key and run the script:
 
 ```bash
 export OPEN_SANDBOX_API_KEY=$(kubectl -n opensandbox get secret opensandbox-server -o jsonpath='{.data.api-key}' | base64 -d)
 OPEN_SANDBOX_DOMAIN=localhost:8080 VERIFY_WITH_KUBECTL=1 bash examples/pause-renew-cli/osb-pause-renew.sh
 ```
+
+The script passes `--no-use-server-proxy` so any existing CLI config or `OPEN_SANDBOX_USE_SERVER_PROXY` environment value does not bypass the local ingress gateway port-forward.
 
 Expected output includes:
 

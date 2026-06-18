@@ -18,7 +18,7 @@ Run the Python SDK example from the repository root after `make k8s-deploy`:
 make python-client-example
 ```
 
-The target installs SDK dependencies into `.venv` with `uv`, port-forwards the OpenSandbox server, runs `app.py`, verifies `kata-optimized`, and kills the sandbox when finished.
+The target installs SDK dependencies into `.venv` with `uv`, port-forwards the OpenSandbox server and ingress gateway, runs `app.py`, verifies `kata-optimized`, and kills the sandbox when finished.
 
 ## Step-By-Step Run
 
@@ -33,6 +33,12 @@ Port-forward the OpenSandbox server:
 
 ```bash
 kubectl -n opensandbox port-forward svc/opensandbox-server 8080:8080
+```
+
+Port-forward the OpenSandbox ingress gateway in a second terminal:
+
+```bash
+kubectl -n opensandbox port-forward svc/opensandbox-ingress-gateway 8081:80
 ```
 
 In another terminal, load the API key from the Kubernetes Secret and run the client:

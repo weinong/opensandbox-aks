@@ -94,7 +94,7 @@ CONFIGURED_TARGETS := all print-config infra-deploy aks-credentials acr-login im
 INTERNAL_TARGETS := $(addprefix _,$(CONFIGURED_TARGETS))
 MAKEFILE_PATH := $(abspath $(firstword $(MAKEFILE_LIST)))
 
-.PHONY: $(CONFIGURED_TARGETS) $(INTERNAL_TARGETS) help local-config check-tools check-example-tools check-acr-vars check-api-key check-ingress-gateway status clean-k8s clean-opensandbox-crds infra-delete gvisor-nodepool-add gvisor-install gvisor-example gvisor-clean firecracker-nodepool-add firecracker-install firecracker-example firecracker-clean
+.PHONY: $(CONFIGURED_TARGETS) $(INTERNAL_TARGETS) help local-config check-tools check-example-tools check-acr-vars check-api-key check-ingress-gateway check-client-ingress-gateway status clean-k8s clean-opensandbox-crds infra-delete gvisor-nodepool-add gvisor-install gvisor-example gvisor-clean firecracker-nodepool-add firecracker-install firecracker-example firecracker-clean
 
 define configured_target
 $1: local-config
@@ -363,6 +363,16 @@ check-ingress-gateway:
 		exit 1; \
 	fi
 
+check-client-ingress-gateway:
+	@if [ "$(ENABLE_INGRESS_GATEWAY)" != "true" ]; then \
+		echo "client examples require ENABLE_INGRESS_GATEWAY=true; redeploy with make k8s-deploy"; \
+		exit 1; \
+	fi
+	@if [ "$(INGRESS_GATEWAY_ROUTE_MODE)" != "header" ]; then \
+		echo "client examples require INGRESS_GATEWAY_ROUTE_MODE=header; redeploy with make k8s-deploy"; \
+		exit 1; \
+	fi
+
 _infra-deploy:
 	az group create --name "$(RESOURCE_GROUP)" --location "$(LOCATION)" $(AZ_SUBSCRIPTION_ARG)
 	az deployment group create \
@@ -496,26 +506,46 @@ _k8s-deploy: check-acr-vars check-api-key check-ingress-gateway _image-push
 	kubectl rollout restart deployment/opensandbox-server -n "$(OPEN_SANDBOX_NAMESPACE)"
 	kubectl rollout status deployment/opensandbox-server -n "$(OPEN_SANDBOX_NAMESPACE)" --timeout=180s
 
-_python-client-example: check-example-tools
-	@set -e; \
-		kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" port-forward svc/opensandbox-server $(SERVER_PORT):8080 >/tmp/opensandbox-kata-port-forward.log 2>&1 & \
+_python-client-example: check-example-tools check-client-ingress-gateway
+	@set -euo pipefail; \
+		port_forward_log=$$(mktemp); \
+		kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" port-forward svc/opensandbox-server $(SERVER_PORT):8080 >"$$port_forward_log" 2>&1 & \
 		port_forward_pid=$$!; \
-		trap 'kill $$port_forward_pid >/dev/null 2>&1 || true' EXIT; \
-		for i in {1..30}; do curl -fsS http://localhost:$(SERVER_PORT)/health >/dev/null 2>&1 && break || sleep 1; done; \
+		gateway_port_forward_pid=; \
+		gateway_port_forward_log=; \
+		trap 'kill $$port_forward_pid >/dev/null 2>&1 || true; if [ -n "$$gateway_port_forward_pid" ]; then kill $$gateway_port_forward_pid >/dev/null 2>&1 || true; fi; rm -f "$$port_forward_log" "$$gateway_port_forward_log"' EXIT; \
+		for i in {1..30}; do \
+			kill -0 $$port_forward_pid >/dev/null 2>&1 || (cat "$$port_forward_log"; exit 1); \
+			curl -fsS http://localhost:$(SERVER_PORT)/health >/dev/null 2>&1 && break; \
+			sleep 1; \
+		done; \
+		kill -0 $$port_forward_pid >/dev/null 2>&1 || (cat "$$port_forward_log"; exit 1); \
 		curl -fsS http://localhost:$(SERVER_PORT)/health >/dev/null; \
+		gateway_port_forward_log=$$(mktemp); \
+		kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" port-forward svc/opensandbox-ingress-gateway $(INGRESS_GATEWAY_LOCAL_PORT):80 >"$$gateway_port_forward_log" 2>&1 & \
+		gateway_port_forward_pid=$$!; \
+		for i in {1..30}; do \
+			kill -0 $$gateway_port_forward_pid >/dev/null 2>&1 || (cat "$$gateway_port_forward_log"; exit 1); \
+			curl -fsS http://127.0.0.1:$(INGRESS_GATEWAY_LOCAL_PORT)/status.ok >/dev/null 2>&1 && break; \
+			sleep 1; \
+		done; \
+		kill -0 $$gateway_port_forward_pid >/dev/null 2>&1 || (cat "$$gateway_port_forward_log"; exit 1); \
+		curl -fsS http://127.0.0.1:$(INGRESS_GATEWAY_LOCAL_PORT)/status.ok >/dev/null; \
 		example_api_key=$$(kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" get secret opensandbox-server -o jsonpath='{.data.api-key}' 2>/dev/null | base64 -d 2>/dev/null || true); \
-		example_api_key="$${example_api_key:-$${OPEN_SANDBOX_API_KEY}}"; \
+		example_api_key="$${example_api_key:-$${OPEN_SANDBOX_API_KEY:-}}"; \
 		test -n "$$example_api_key" || (echo "OPEN_SANDBOX_API_KEY is required, or deploy opensandbox-server with make k8s-deploy first"; exit 1); \
 		$(UV) venv --allow-existing .venv; \
 		$(UV) pip install -q --python .venv -r $(PYTHON_CLIENT_DIR)/requirements.txt; \
 		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_API_KEY="$$example_api_key" SANDBOX_IMAGE="$(SANDBOX_IMAGE)" VERIFY_KATA_WITH_KUBECTL=1 OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" $(UV) run --no-project --python .venv/bin/python python $(PYTHON_CLIENT_DIR)/app.py
 
-_cli-client-example: check-example-tools
+_cli-client-example: check-example-tools check-client-ingress-gateway
 	@set -euo pipefail; \
 		port_forward_log=$$(mktemp); \
 		kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" port-forward svc/opensandbox-server $(SERVER_PORT):8080 >"$$port_forward_log" 2>&1 & \
 		port_forward_pid=$$!; \
-		trap 'kill $$port_forward_pid >/dev/null 2>&1 || true; rm -f "$$port_forward_log"' EXIT; \
+		gateway_port_forward_pid=; \
+		gateway_port_forward_log=; \
+		trap 'kill $$port_forward_pid >/dev/null 2>&1 || true; if [ -n "$$gateway_port_forward_pid" ]; then kill $$gateway_port_forward_pid >/dev/null 2>&1 || true; fi; rm -f "$$port_forward_log" "$$gateway_port_forward_log"' EXIT; \
 		for i in {1..30}; do \
 			kill -0 $$port_forward_pid >/dev/null 2>&1 || (cat "$$port_forward_log"; exit 1); \
 			health=$$(curl -fsS http://localhost:$(SERVER_PORT)/health 2>/dev/null || true); \
@@ -525,19 +555,31 @@ _cli-client-example: check-example-tools
 		kill -0 $$port_forward_pid >/dev/null 2>&1 || (cat "$$port_forward_log"; exit 1); \
 		health=$$(curl -fsS http://localhost:$(SERVER_PORT)/health); \
 		HEALTH="$$health" $(UV) run --no-project python -c 'import json, os, sys; sys.exit(0 if json.loads(os.environ["HEALTH"]).get("status") == "healthy" else 1)' || (echo "Unexpected opensandbox-server health response: $$health"; exit 1); \
+		gateway_port_forward_log=$$(mktemp); \
+		kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" port-forward svc/opensandbox-ingress-gateway $(INGRESS_GATEWAY_LOCAL_PORT):80 >"$$gateway_port_forward_log" 2>&1 & \
+		gateway_port_forward_pid=$$!; \
+		for i in {1..30}; do \
+			kill -0 $$gateway_port_forward_pid >/dev/null 2>&1 || (cat "$$gateway_port_forward_log"; exit 1); \
+			curl -fsS http://127.0.0.1:$(INGRESS_GATEWAY_LOCAL_PORT)/status.ok >/dev/null 2>&1 && break; \
+			sleep 1; \
+		done; \
+		kill -0 $$gateway_port_forward_pid >/dev/null 2>&1 || (cat "$$gateway_port_forward_log"; exit 1); \
+		curl -fsS http://127.0.0.1:$(INGRESS_GATEWAY_LOCAL_PORT)/status.ok >/dev/null; \
 		cli_api_key=$$(kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" get secret opensandbox-server -o jsonpath='{.data.api-key}' 2>/dev/null | base64 -d 2>/dev/null || true); \
 		cli_api_key="$${cli_api_key:-$${OPEN_SANDBOX_API_KEY:-}}"; \
 		test -n "$$cli_api_key" || (echo "OPEN_SANDBOX_API_KEY is required, or deploy opensandbox-server with make k8s-deploy first"; exit 1); \
 		$(UV) venv --allow-existing .venv; \
 		$(UV) pip install -q --python .venv -r $(CLI_CLIENT_DIR)/requirements.txt opensandbox-cli==$(OPEN_SANDBOX_CLI_VERSION); \
-		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_PROTOCOL=http OPEN_SANDBOX_API_KEY="$$cli_api_key" OPEN_SANDBOX_USE_SERVER_PROXY=true SANDBOX_IMAGE="$(SANDBOX_IMAGE)" VERIFY_KATA_WITH_KUBECTL=1 OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" OSB_BIN=".venv/bin/osb" UV="$(UV)" UV_PYTHON=".venv/bin/python" bash $(CLI_CLIENT_DIR)/osb-cli-smoke.sh
+		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_PROTOCOL=http OPEN_SANDBOX_API_KEY="$$cli_api_key" SANDBOX_IMAGE="$(SANDBOX_IMAGE)" VERIFY_KATA_WITH_KUBECTL=1 OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" OSB_BIN=".venv/bin/osb" UV="$(UV)" UV_PYTHON=".venv/bin/python" bash $(CLI_CLIENT_DIR)/osb-cli-smoke.sh
 
-_pause-renew-example: check-example-tools
+_pause-renew-example: check-example-tools check-client-ingress-gateway
 	@set -euo pipefail; \
 		port_forward_log=$$(mktemp); \
 		kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" port-forward svc/opensandbox-server $(SERVER_PORT):8080 >"$$port_forward_log" 2>&1 & \
 		port_forward_pid=$$!; \
-		trap 'kill $$port_forward_pid >/dev/null 2>&1 || true; rm -f "$$port_forward_log"' EXIT; \
+		gateway_port_forward_pid=; \
+		gateway_port_forward_log=; \
+		trap 'kill $$port_forward_pid >/dev/null 2>&1 || true; if [ -n "$$gateway_port_forward_pid" ]; then kill $$gateway_port_forward_pid >/dev/null 2>&1 || true; fi; rm -f "$$port_forward_log" "$$gateway_port_forward_log"' EXIT; \
 		for i in {1..30}; do \
 			kill -0 $$port_forward_pid >/dev/null 2>&1 || (cat "$$port_forward_log"; exit 1); \
 			health=$$(curl -fsS http://localhost:$(SERVER_PORT)/health 2>/dev/null || true); \
@@ -547,6 +589,16 @@ _pause-renew-example: check-example-tools
 		kill -0 $$port_forward_pid >/dev/null 2>&1 || (cat "$$port_forward_log"; exit 1); \
 		health=$$(curl -fsS http://localhost:$(SERVER_PORT)/health); \
 		HEALTH="$$health" $(UV) run --no-project python -c 'import json, os, sys; sys.exit(0 if json.loads(os.environ["HEALTH"]).get("status") == "healthy" else 1)' || (echo "Unexpected opensandbox-server health response: $$health"; exit 1); \
+		gateway_port_forward_log=$$(mktemp); \
+		kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" port-forward svc/opensandbox-ingress-gateway $(INGRESS_GATEWAY_LOCAL_PORT):80 >"$$gateway_port_forward_log" 2>&1 & \
+		gateway_port_forward_pid=$$!; \
+		for i in {1..30}; do \
+			kill -0 $$gateway_port_forward_pid >/dev/null 2>&1 || (cat "$$gateway_port_forward_log"; exit 1); \
+			curl -fsS http://127.0.0.1:$(INGRESS_GATEWAY_LOCAL_PORT)/status.ok >/dev/null 2>&1 && break; \
+			sleep 1; \
+		done; \
+		kill -0 $$gateway_port_forward_pid >/dev/null 2>&1 || (cat "$$gateway_port_forward_log"; exit 1); \
+		curl -fsS http://127.0.0.1:$(INGRESS_GATEWAY_LOCAL_PORT)/status.ok >/dev/null; \
 		example_api_key=$$(kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" get secret opensandbox-server -o jsonpath='{.data.api-key}' 2>/dev/null | base64 -d 2>/dev/null || true); \
 		example_api_key="$${example_api_key:-$${OPEN_SANDBOX_API_KEY:-}}"; \
 		test -n "$$example_api_key" || (echo "OPEN_SANDBOX_API_KEY is required, or deploy opensandbox-server with make k8s-deploy first"; exit 1); \
@@ -554,12 +606,14 @@ _pause-renew-example: check-example-tools
 		$(UV) pip install -q --python .venv -r $(PAUSE_RENEW_EXAMPLE_DIR)/requirements.txt; \
 		OPEN_SANDBOX_DOMAIN=localhost:$(SERVER_PORT) OPEN_SANDBOX_API_KEY="$$example_api_key" SANDBOX_IMAGE="$(SANDBOX_IMAGE)" VERIFY_WITH_KUBECTL=1 OPEN_SANDBOX_NAMESPACE="$(OPEN_SANDBOX_NAMESPACE)" $(UV) run --no-project --python .venv/bin/python python $(PAUSE_RENEW_EXAMPLE_DIR)/app.py
 
-_pause-renew-cli-example: check-example-tools
+_pause-renew-cli-example: check-example-tools check-client-ingress-gateway
 	@set -euo pipefail; \
 		port_forward_log=$$(mktemp); \
 		kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" port-forward svc/opensandbox-server $(SERVER_PORT):8080 >"$$port_forward_log" 2>&1 & \
 		port_forward_pid=$$!; \
-		trap 'kill $$port_forward_pid >/dev/null 2>&1 || true; rm -f "$$port_forward_log"' EXIT; \
+		gateway_port_forward_pid=; \
+		gateway_port_forward_log=; \
+		trap 'kill $$port_forward_pid >/dev/null 2>&1 || true; if [ -n "$$gateway_port_forward_pid" ]; then kill $$gateway_port_forward_pid >/dev/null 2>&1 || true; fi; rm -f "$$port_forward_log" "$$gateway_port_forward_log"' EXIT; \
 		for i in {1..30}; do \
 			kill -0 $$port_forward_pid >/dev/null 2>&1 || (cat "$$port_forward_log"; exit 1); \
 			health=$$(curl -fsS http://localhost:$(SERVER_PORT)/health 2>/dev/null || true); \
@@ -569,6 +623,16 @@ _pause-renew-cli-example: check-example-tools
 		kill -0 $$port_forward_pid >/dev/null 2>&1 || (cat "$$port_forward_log"; exit 1); \
 		health=$$(curl -fsS http://localhost:$(SERVER_PORT)/health); \
 		HEALTH="$$health" $(UV) run --no-project python -c 'import json, os, sys; sys.exit(0 if json.loads(os.environ["HEALTH"]).get("status") == "healthy" else 1)' || (echo "Unexpected opensandbox-server health response: $$health"; exit 1); \
+		gateway_port_forward_log=$$(mktemp); \
+		kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" port-forward svc/opensandbox-ingress-gateway $(INGRESS_GATEWAY_LOCAL_PORT):80 >"$$gateway_port_forward_log" 2>&1 & \
+		gateway_port_forward_pid=$$!; \
+		for i in {1..30}; do \
+			kill -0 $$gateway_port_forward_pid >/dev/null 2>&1 || (cat "$$gateway_port_forward_log"; exit 1); \
+			curl -fsS http://127.0.0.1:$(INGRESS_GATEWAY_LOCAL_PORT)/status.ok >/dev/null 2>&1 && break; \
+			sleep 1; \
+		done; \
+		kill -0 $$gateway_port_forward_pid >/dev/null 2>&1 || (cat "$$gateway_port_forward_log"; exit 1); \
+		curl -fsS http://127.0.0.1:$(INGRESS_GATEWAY_LOCAL_PORT)/status.ok >/dev/null; \
 		example_api_key=$$(kubectl -n "$(OPEN_SANDBOX_NAMESPACE)" get secret opensandbox-server -o jsonpath='{.data.api-key}' 2>/dev/null | base64 -d 2>/dev/null || true); \
 		example_api_key="$${example_api_key:-$${OPEN_SANDBOX_API_KEY:-}}"; \
 		test -n "$$example_api_key" || (echo "OPEN_SANDBOX_API_KEY is required, or deploy opensandbox-server with make k8s-deploy first"; exit 1); \
