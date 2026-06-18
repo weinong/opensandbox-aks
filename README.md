@@ -2,7 +2,7 @@
 
 This repository contains a reproducible example for running [OpenSandbox](https://github.com/opensandbox-group/OpenSandbox) on Azure Kubernetes Service with AKS Pod Sandboxing backed by Kata Containers.
 
-The example provisions AKS and Azure Container Registry with Bicep, installs the OpenSandbox Kubernetes controller, deploys an OpenSandbox lifecycle server configured for the `kata-optimized` RuntimeClass, and runs a Python SDK client example that creates a sandbox and executes commands inside it.
+The example provisions AKS and Azure Container Registry with Bicep, installs the OpenSandbox Kubernetes controller, deploys an OpenSandbox lifecycle server configured for the `kata-optimized` RuntimeClass, and runs Python SDK and CLI examples that create sandboxes and execute commands inside them.
 
 ## Layout
 
@@ -16,6 +16,7 @@ The example provisions AKS and Azure Container Registry with Bicep, installs the
 - `examples/pause-renew/`: Python SDK example for renewing expiration, pausing, resuming, and verifying persisted filesystem state.
 - `examples/pause-renew-cli/`: `osb` CLI example for the same renew, pause, and resume lifecycle.
 - `examples/vscode/`: VS Code Web sandbox image and Python SDK launcher example.
+- `examples/github-copilot-cli/`: GitHub Copilot CLI sandbox image and launcher example.
 - `Makefile`: Human-reproducible workflow.
 
 ## SKU Choice
@@ -80,6 +81,8 @@ make pause-renew-example
 make pause-renew-cli-example
 make vscode-image-push
 make vscode-example
+make github-copilot-cli-image-push
+make github-copilot-cli-example
 make clean-k8s
 make clean-opensandbox-crds
 make infra-delete
