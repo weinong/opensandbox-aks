@@ -48,7 +48,7 @@ make print-config
 
 The generated `.make.env` file is ignored by git and contains environment-specific values: resource names, region, namespace, the current Azure subscription ID, and a local `OPEN_SANDBOX_API_KEY`. Stable workflow defaults such as node pool sizing, image tag, controller version, CLI version, snapshot defaults, and example image live in the `Makefile` and can still be overridden on the make command line when needed. Deploy and example targets create/backfill this file automatically without overwriting existing environment values. During migration, known generated stable defaults are pruned from existing `.make.env` files so future Makefile defaults apply. If you use a custom `LOCAL_CONFIG` path, add it to `.gitignore` or `.git/info/exclude` before generating secrets.
 
-By default this sample uses managed identity `AcrPull` for the server image path and does not create registry credentials. OpenSandbox pause/resume needs push and pull credentials for root filesystem snapshot images; for disposable examples, opt in with `ENABLE_SNAPSHOT_REGISTRY_SECRET=true ACR_ADMIN_USER_ENABLED=true`, or create your own `kubernetes.io/dockerconfigjson` secret named by `OPEN_SANDBOX_SNAPSHOT_SECRET` before pausing sandboxes.
+By default this sample uses managed identity `AcrPull` for the server image path and creates a snapshot registry secret for pause/resume. OpenSandbox pause/resume needs push and pull credentials for root filesystem snapshot images, so the default disposable setup enables ACR admin credentials and stores them in the Kubernetes docker config secret named by `OPEN_SANDBOX_SNAPSHOT_SECRET`.
 
 Run the end-to-end workflow:
 
@@ -128,13 +128,13 @@ OpenSandbox pause/resume requires controller support in addition to the lifecycl
 
 The controller commits the sandbox root filesystem to an OCI image and stores it under `OPEN_SANDBOX_SNAPSHOT_REGISTRY`, which defaults to `<acr>.azurecr.io/opensandbox-snapshots`. Pause/resume currently supports single-replica sandboxes, which is what this sample creates.
 
-For a disposable sample environment backed by this repo's ACR, let the Makefile create the snapshot push/pull secret:
+For a disposable sample environment backed by this repo's ACR, `make all` creates the snapshot push/pull secret by default:
 
 ```bash
-make all ACR_ADMIN_USER_ENABLED=true ENABLE_SNAPSHOT_REGISTRY_SECRET=true
+make all
 ```
 
-ACR admin credentials are registry-wide credentials stored in a Kubernetes docker config secret. Prefer a scoped registry credential for durable environments, and rotate or disable ACR admin credentials after disposable testing.
+ACR admin credentials are registry-wide credentials stored in a Kubernetes docker config secret. Prefer a scoped registry credential for durable environments, and rotate or disable ACR admin credentials after disposable testing. To opt out of automatic secret creation, set `ENABLE_SNAPSHOT_REGISTRY_SECRET=false` and create your own `kubernetes.io/dockerconfigjson` secret named by `OPEN_SANDBOX_SNAPSHOT_SECRET` before pausing sandboxes.
 
 Useful checks after `make controller-install`:
 
